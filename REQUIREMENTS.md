@@ -1,6 +1,6 @@
 # Inbound Freight Tool — Requirements
 
-**Status:** Draft v2
+**Status:** Draft v3
 **Owner:** Shipping / Logistics (Wigwam Mills)
 **Business owner (Phase 2/3 sign-off):** Chris Chesebro
 **Last updated:** 2026-07-24
@@ -107,9 +107,13 @@ Phase 1 launches as a **parallel run**: the shipping manager keeps doing the cur
 - FR-5.3: During the Phase 1 parallel run, reporting should support comparing tool-estimated rates/extraction against the manual process's actual outcomes, to evaluate exit criteria.
 
 ### 6.6 Acumatica integration (Phase 3)
-- FR-6.1: Match an inbound shipment to an open Purchase Order in Acumatica (by vendor + item + expected date, with manual override if no confident match).
-- FR-6.2: On booking, write shipment and expected receipt information back to the associated Acumatica PO/receipt record.
-- FR-6.3: Vendor and item identifiers used for PO matching should be sourced from Acumatica (as the ERP of record for POs/vendors). Freight-class and material defaults remain owned by this tool per FR-2.2 and are not synced from Acumatica.
+- FR-6.1: PO matching is **PO-number-driven, not fuzzy-matched**: vendors are expected to reference the Acumatica PO number in their shipment communication. System extracts the PO number from the email/PDF alongside the other shipment fields.
+- FR-6.1a: Vendor-quoted PO numbers commonly need cleanup/normalization (extra characters, reformatting, or a vendor-side reference number that isn't the raw Acumatica PO number) before lookup. Extraction must normalize the referenced number and attempt an Acumatica PO lookup, not require an exact raw-string match.
+- FR-6.1b: Once a PO is found, the tool surfaces the matching PO line(s) and their quantity so the shipping manager can manually verify the line and quantity in-house before confirming the match. This human verification step is required — the system proposes a match, it does not auto-confirm one.
+- FR-6.1c: Partial shipments against a single PO line are normal and expected (a line may be fulfilled across multiple deliveries). Quantity on this shipment being less than the PO line's remaining/open quantity is **not** an error condition and should not be flagged as a mismatch by default.
+- FR-6.1d: If the referenced PO number isn't found in Acumatica (not entered yet, typo, wrong number), the shipment proceeds through extraction/rate-shopping/booking **unlinked** rather than being blocked, but is flagged for manual reconciliation later (e.g. a "needs PO reconciliation" status/queue).
+- FR-6.2: On booking, write shipment and expected receipt information back to the associated Acumatica PO/receipt record (once a PO match has been confirmed per FR-6.1b).
+- FR-6.3: Vendor and item identifiers, and PO line/quantity data used for matching, should be sourced live from Acumatica (as the ERP of record for POs/vendors). Freight-class and material defaults remain owned by this tool per FR-2.2 and are not synced from Acumatica.
 - FR-6.4: Any write-back to Acumatica must be reviewable/undoable by a user before it is treated as final (no silent automated posting without a review step, at least initially).
 - FR-6.5: Phase 2 go-live and Phase 3 go-live each require explicit sign-off from the business owner (Chris Chesebro) before enabling live carrier booking or Acumatica write-back, given the financial and ERP-data impact.
 
@@ -123,7 +127,8 @@ Core shipment record (minimum fields to be retained per shipment, across phases)
 - Origin address, destination address
 - Ready date, requested/actual pickup date
 - Carrier options presented (carrier, price, transit time) and which was selected
-- Linked PO number (Phase 3+)
+- Vendor-referenced PO number as extracted (raw), and the normalized/matched Acumatica PO number + line, if found (Phase 3+)
+- PO reconciliation status: matched, unlinked/needs reconciliation, or not applicable (Phase 3+)
 - Booking/decision timestamp and user
 
 No payroll or HR data is involved in this system. Any supplier contact information carried in emails should be limited to what's operationally necessary (company name, pickup contact/phone) and not expanded into a broader contacts database without a clear business need.
@@ -161,12 +166,16 @@ Resolved during requirements review (2026-07-24):
 - **Freight-class/material default data ownership:** Maintained inside this tool, not sourced from or synced with Acumatica.
 - **Phase 1 rollout:** Parallel run alongside the existing manual process, not a hard cutover.
 - **Phase 2/3 sign-off owner:** Chris Chesebro.
+- **PO matching approach (Phase 3):** Driven by the PO number vendors reference in their shipment communication, not fuzzy vendor/item/date matching. Vendor-quoted PO numbers often need cleanup/normalization before an Acumatica lookup (FR-6.1a). Once found, the shipping manager manually verifies the PO line and quantity in-house before the match is confirmed (FR-6.1b) — this is by design, not a fallback.
+- **Partial shipments (Phase 3):** Normal and expected; a shipment quantity less than the PO line's remaining quantity is not treated as a mismatch (FR-6.1c).
+- **No PO match found (Phase 3):** Shipment proceeds unlinked through the rest of the workflow and is flagged for manual reconciliation later, rather than being blocked (FR-6.1d).
 
 ## 12. Remaining Open Items
 
 - Exit criteria for ending the Phase 1 parallel run (e.g. minimum shipments validated, accuracy threshold) — needs to be defined before Phase 1 build starts.
 - Which carrier(s) to prioritize first when setting up real API access for Phase 2 (negotiated accounts vs. open-market LTL), and expected timeline for that procurement.
-- Whether Acumatica vendor/item data is already structured in a way that supports confident automatic PO matching (FR-6.1), or whether vendor/item cleanup is needed first.
+- Specific normalization rules for vendor-quoted PO numbers (what variations actually show up — extra prefixes/suffixes, vendor's own order number instead of the Acumatica number, etc.) — should be catalogued from a sample of real supplier emails during Phase 3 design, rather than guessed upfront.
+- Where "needs PO reconciliation" shipments should surface for follow-up (a queue/view in this tool, or a report to Purchasing/AP) and who owns clearing that queue.
 
 ## 13. Assumptions
 
