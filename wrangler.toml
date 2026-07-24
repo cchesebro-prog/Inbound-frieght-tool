@@ -1,0 +1,16 @@
+name = "inbound-freight-tool"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "inbound-freight-tool-db"
+database_id = "REPLACE_WITH_REAL_D1_DATABASE_ID"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# Secrets — set with `wrangler secret put <NAME>`, never committed here:
+#   ANTHROPIC_API_KEY   Claude API key used server-side for shipment extraction
+#   SESSION_SECRET      HMAC key used to sign session cookies

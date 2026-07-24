@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Inbound Freight Tool</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { font-size: 1.25rem; }
+  .destination-bar { background: #f0f4f2; border: 1px solid #d5ddd9; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1.5rem; }
+  textarea { width: 100%; min-height: 8rem; font-family: inherit; }
+  button { cursor: pointer; padding: 0.5rem 1rem; border-radius: 4px; border: 1px solid #1D9E75; background: #1D9E75; color: white; }
+  button.secondary { background: white; color: #1D9E75; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+  th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #e5e5e5; font-size: 0.9rem; }
+  .best { border-left: 3px solid #1D9E75; }
+  #login-view, #app-view { display: none; }
+  input { padding: 0.4rem; margin-right: 0.5rem; }
+</style>
+</head>
+<body>
+
+<div id="login-view">
+  <h1>Inbound Freight Tool — Sign in</h1>
+  <form id="login-form">
+    <input type="email" id="login-email" placeholder="Email" required />
+    <input type="password" id="login-password" placeholder="Password" required />
+    <button type="submit">Sign in</button>
+  </form>
+  <p id="login-error" style="color: #b3261e;"></p>
+</div>
+
+<div id="app-view">
+  <h1>Inbound Freight Tool <button class="secondary" id="logout-btn" style="float:right;">Sign out</button></h1>
+
+  <div class="destination-bar">Delivering to: 5300 WI-42, Sheboygan, WI 53083</div>
+
+  <textarea id="raw-input" placeholder="Paste a supplier email here..."></textarea>
+  <br /><br />
+  <button id="add-shipment-btn">Add shipment</button>
+  <button class="secondary" id="rate-all-btn">Rate all queued</button>
+
+  <table id="shipments-table">
+    <thead>
+      <tr><th>ID</th><th>Material</th><th>Weight (lbs)</th><th>Status</th><th>Best rate</th><th></th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+  const loginView = document.getElementById('login-view');
+  const appView = document.getElementById('app-view');
+
+  async function api(path, options = {}) {
+    const res = await fetch(path, {
+      ...options,
+      headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+    });
+    if (res.status === 401) {
+      showLogin();
+      throw new Error('Not authenticated');
+    }
+    return res.json();
+  }
+
+  function showLogin() {
+    loginView.style.display = 'block';
+    appView.style.display = 'none';
+  }
+
+  function showApp() {
+    loginView.style.display = 'none';
+    appView.style.display = 'block';
+    loadShipments();
+  }
+
+  document.getElementById('login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (res.ok) {
+      showApp();
+    } else {
+      document.getElementById('login-error').textContent = 'Invalid credentials';
+    }
+  });
+
+  document.getElementById('logout-btn').addEventListener('click', async () => {
+    await api('/api/logout', { method: 'POST' });
+    showLogin();
+  });
+
+  document.getElementById('add-shipment-btn').addEventListener('click', async () => {
+    const rawInput = document.getElementById('raw-input').value;
+    if (!rawInput.trim()) return;
+    await api('/api/shipments', { method: 'POST', body: JSON.stringify({ rawInput }) });
+    document.getElementById('raw-input').value = '';
+    loadShipments();
+  });
+
+  document.getElementById('rate-all-btn').addEventListener('click', async () => {
+    const shipments = await api('/api/shipments');
+    const queuedIds = shipments.filter((s) => s.status === 'queued').map((s) => s.id);
+    if (queuedIds.length === 0) return;
+    await api('/api/shipments/rate-batch', {
+      method: 'POST',
+      body: JSON.stringify({ shipmentIds: queuedIds }),
+    });
+    loadShipments();
+  });
+
+  async function loadShipments() {
+    const shipments = await api('/api/shipments');
+    const tbody = document.querySelector('#shipments-table tbody');
+    tbody.innerHTML = '';
+    for (const s of shipments) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${s.id}</td><td>${s.material ?? '—'}</td><td>${s.weight_lbs ?? '—'}</td><td>${s.status}</td><td>—</td><td></td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  // Assume logged out until an authenticated call proves otherwise.
+  api('/api/shipments').then(showApp).catch(showLogin);
+</script>
+
+</body>
+</html>
