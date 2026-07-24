@@ -5,7 +5,7 @@ compatibility_date = "2024-11-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "inbound-freight-tool-db"
-database_id = "REPLACE_WITH_REAL_D1_DATABASE_ID"
+database_id = "acbc7790-3593-4917-ad72-c4d0712010b9"
 
 [assets]
 directory = "./public"
