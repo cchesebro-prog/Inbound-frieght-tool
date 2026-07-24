@@ -1,6 +1,6 @@
 # Inbound Freight Tool — Requirements
 
-**Status:** Draft v3
+**Status:** Draft v4
 **Owner:** Shipping / Logistics (Wigwam Mills)
 **Business owner (Phase 2/3 sign-off):** Chris Chesebro
 **Last updated:** 2026-07-24
@@ -72,7 +72,7 @@ This document defines requirements primarily for **Phase 1**, with Phase 2/3 req
 
 ### 5.1 Rollout approach (confirmed)
 
-Phase 1 launches as a **parallel run**: the shipping manager keeps doing the current manual process as the system of record while using the tool alongside it, so extraction accuracy and estimated rates can be validated against real outcomes before the tool becomes primary. Exit criteria for ending the parallel run (e.g. an accuracy threshold, a minimum number of shipments validated) should be defined before Phase 1 build starts.
+Phase 1 launches as a **parallel run**: the shipping manager keeps doing the current manual process as the system of record while using the tool alongside it, so extraction accuracy and estimated rates can be validated against real outcomes before the tool becomes primary. There is no fixed time-box or accuracy threshold for ending the parallel run — it ends when the shipping manager, as the primary user, judges the tool trustworthy enough to rely on. Reporting (FR-5.3) should give them what they need to make that call, not enforce a rule on their behalf.
 
 ## 6. Functional Requirements
 
@@ -91,7 +91,7 @@ Phase 1 launches as a **parallel run**: the shipping manager keeps doing the cur
 ### 6.3 Rate shopping
 - FR-3.1: System calculates/retrieves rates for all queued shipments concurrently (not sequentially), across all configured carriers.
 - FR-3.2: Phase 1: rates are estimated using dimensional weight vs. actual weight, freight class multiplier, and an origin-to-Sheboygan zone table.
-- FR-3.3: Phase 2: rates are retrieved from live carrier rating APIs for both negotiated-account carriers and open-market LTL carriers. Negotiated-account API access (UPS, FedEx, XPO) does not exist yet and must be procured/set up as a prerequisite for Phase 2.
+- FR-3.3: Phase 2: rates are retrieved from live carrier rating APIs for both negotiated-account carriers and open-market LTL carriers. No API access exists yet for any carrier; setup is prioritized **open-market LTL first** (SAIA, Estes, Old Dominion, R+L), with negotiated-account carriers (UPS, FedEx, XPO) following.
 - FR-3.4: Results are sorted by price ascending and the lowest rate is visually highlighted.
 - FR-3.5: Each result shows carrier, price, transit estimate (when available), and destination.
 
@@ -104,14 +104,14 @@ Phase 1 launches as a **parallel run**: the shipping manager keeps doing the cur
 ### 6.5 Reporting
 - FR-5.1: Tool shows daily/batch metrics: shipments processed, total cost at chosen rates, savings vs. highest quoted rate.
 - FR-5.2: Tool retains historical shipment/rate/decision records (not just in-session) so spend and carrier performance can be reviewed over time.
-- FR-5.3: During the Phase 1 parallel run, reporting should support comparing tool-estimated rates/extraction against the manual process's actual outcomes, to evaluate exit criteria.
+- FR-5.3: During the Phase 1 parallel run, reporting should support comparing tool-estimated rates/extraction against the manual process's actual outcomes, so the shipping manager has what they need to judge when to rely on the tool as primary (see 5.1).
 
 ### 6.6 Acumatica integration (Phase 3)
 - FR-6.1: PO matching is **PO-number-driven, not fuzzy-matched**: vendors are expected to reference the Acumatica PO number in their shipment communication. System extracts the PO number from the email/PDF alongside the other shipment fields.
 - FR-6.1a: Vendor-quoted PO numbers commonly need cleanup/normalization (extra characters, reformatting, or a vendor-side reference number that isn't the raw Acumatica PO number) before lookup. Extraction must normalize the referenced number and attempt an Acumatica PO lookup, not require an exact raw-string match.
 - FR-6.1b: Once a PO is found, the tool surfaces the matching PO line(s) and their quantity so the shipping manager can manually verify the line and quantity in-house before confirming the match. This human verification step is required — the system proposes a match, it does not auto-confirm one.
 - FR-6.1c: Partial shipments against a single PO line are normal and expected (a line may be fulfilled across multiple deliveries). Quantity on this shipment being less than the PO line's remaining/open quantity is **not** an error condition and should not be flagged as a mismatch by default.
-- FR-6.1d: If the referenced PO number isn't found in Acumatica (not entered yet, typo, wrong number), the shipment proceeds through extraction/rate-shopping/booking **unlinked** rather than being blocked, but is flagged for manual reconciliation later (e.g. a "needs PO reconciliation" status/queue).
+- FR-6.1d: If the referenced PO number isn't found in Acumatica (not entered yet, typo, wrong number), the shipment proceeds through extraction/rate-shopping/booking **unlinked** rather than being blocked, but is flagged for manual reconciliation later (e.g. a "needs PO reconciliation" status/queue). Ownership of clearing this queue is shared/case-by-case rather than assigned to a single role — the queue should be visible to both Shipping and Purchasing so either can pick it up.
 - FR-6.2: On booking, write shipment and expected receipt information back to the associated Acumatica PO/receipt record (once a PO match has been confirmed per FR-6.1b).
 - FR-6.3: Vendor and item identifiers, and PO line/quantity data used for matching, should be sourced live from Acumatica (as the ERP of record for POs/vendors). Freight-class and material defaults remain owned by this tool per FR-2.2 and are not synced from Acumatica.
 - FR-6.4: Any write-back to Acumatica must be reviewable/undoable by a user before it is treated as final (no silent automated posting without a review step, at least initially).
@@ -138,7 +138,7 @@ No payroll or HR data is involved in this system. Any supplier contact informati
 | System | Purpose | Phase |
 |---|---|---|
 | Anthropic Claude API | Extract structured shipment data from unstructured supplier emails/PDFs | 1 |
-| Carrier rating APIs (UPS, FedEx, XPO — negotiated; SAIA, Estes, Old Dominion, R+L — open market) | Live rate quotes and, later, booking. No credentials/API access exist today — must be set up before Phase 2. | 2 |
+| Carrier rating APIs (SAIA, Estes, Old Dominion, R+L — open market, prioritized first; UPS, FedEx, XPO — negotiated, second) | Live rate quotes and, later, booking. No credentials/API access exist today — must be set up before Phase 2. | 2 |
 | Acumatica 2025R2 (ACM) | Purchase orders and vendor/item identifiers for PO matching; shipment/receipt write-back | 3 |
 
 Acumatica integration should use the standard Acumatica web service endpoints / Generic Inquiries appropriate to 2025R2, consistent with how other Wigwam Acumatica integrations are built. Freight-class/material default data is explicitly **not** part of this integration (see FR-2.2/FR-6.3) — it stays owned by this tool.
@@ -164,18 +164,17 @@ Resolved during requirements review (2026-07-24):
 
 - **Carrier API access:** None exists today for any carrier (UPS, FedEx, XPO, or LTL market carriers). Procuring/setting up API access is a Phase 2 prerequisite, owned by IT/Systems Admin.
 - **Freight-class/material default data ownership:** Maintained inside this tool, not sourced from or synced with Acumatica.
-- **Phase 1 rollout:** Parallel run alongside the existing manual process, not a hard cutover.
+- **Phase 1 rollout:** Parallel run alongside the existing manual process, not a hard cutover. No fixed exit criteria — ends when the shipping manager judges the tool trustworthy enough to rely on (see 5.1).
 - **Phase 2/3 sign-off owner:** Chris Chesebro.
+- **Phase 2 carrier priority:** Open-market LTL carriers (SAIA, Estes, Old Dominion, R+L) get API access set up first; negotiated-account carriers (UPS, FedEx, XPO) follow.
 - **PO matching approach (Phase 3):** Driven by the PO number vendors reference in their shipment communication, not fuzzy vendor/item/date matching. Vendor-quoted PO numbers often need cleanup/normalization before an Acumatica lookup (FR-6.1a). Once found, the shipping manager manually verifies the PO line and quantity in-house before the match is confirmed (FR-6.1b) — this is by design, not a fallback.
 - **Partial shipments (Phase 3):** Normal and expected; a shipment quantity less than the PO line's remaining quantity is not treated as a mismatch (FR-6.1c).
-- **No PO match found (Phase 3):** Shipment proceeds unlinked through the rest of the workflow and is flagged for manual reconciliation later, rather than being blocked (FR-6.1d).
+- **No PO match found (Phase 3):** Shipment proceeds unlinked through the rest of the workflow and is flagged for manual reconciliation, visible to both Shipping and Purchasing rather than assigned to one owner (FR-6.1d).
+- **PO number normalization rules:** Deliberately deferred — will be catalogued from a sample of real supplier emails once Phase 3 design starts, rather than guessed now.
 
 ## 12. Remaining Open Items
 
-- Exit criteria for ending the Phase 1 parallel run (e.g. minimum shipments validated, accuracy threshold) — needs to be defined before Phase 1 build starts.
-- Which carrier(s) to prioritize first when setting up real API access for Phase 2 (negotiated accounts vs. open-market LTL), and expected timeline for that procurement.
-- Specific normalization rules for vendor-quoted PO numbers (what variations actually show up — extra prefixes/suffixes, vendor's own order number instead of the Acumatica number, etc.) — should be catalogued from a sample of real supplier emails during Phase 3 design, rather than guessed upfront.
-- Where "needs PO reconciliation" shipments should surface for follow-up (a queue/view in this tool, or a report to Purchasing/AP) and who owns clearing that queue.
+None outstanding from this round of review. Expect new open items to surface once Phase 1 build starts and, later, during Phase 3 design (e.g. the PO-number normalization catalogue above).
 
 ## 13. Assumptions
 
