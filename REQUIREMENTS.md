@@ -1,7 +1,8 @@
 # Inbound Freight Tool — Requirements
 
-**Status:** Draft v1
+**Status:** Draft v2
 **Owner:** Shipping / Logistics (Wigwam Mills)
+**Business owner (Phase 2/3 sign-off):** Chris Chesebro
 **Last updated:** 2026-07-24
 **Scope of this document:** Inbound raw-material transportation management only. Outbound (customer/DTC) shipping is explicitly out of scope for this phase and will be defined as a separate project once inbound is in production.
 
@@ -42,6 +43,7 @@ This effort formalizes and extends the existing `inbound-routing` proof-of-conce
 | Purchasing | Source of the original PO; wants shipment status tied back to the PO |
 | Accounts Payable / Finance | Wants freight cost to reconcile against vendor bills in Acumatica |
 | IT / Systems Admin | Owns integration with Acumatica and any carrier API credentials |
+| Business owner (Chris Chesebro) | Signs off on Phase 2 (live rates/booking) and Phase 3 (Acumatica write-back) before each goes live |
 
 ## 4. Current State (Phase 0 — proof of concept)
 
@@ -56,6 +58,8 @@ The existing `inbound-routing` skill/widget already establishes:
 
 This proof of concept validates the workflow but uses simulated rates and has no connection to real carrier pricing, no persistence beyond a session, and no tie-in to Acumatica.
 
+**Carrier API status (confirmed):** No carrier rating/booking API credentials exist today for UPS, FedEx, or XPO (or any other carrier). Phase 1 must run on simulated/estimated rates; setting up real API access is a prerequisite for Phase 2, not something already available to build against.
+
 ## 5. Scope & Phased Roadmap
 
 | Phase | Description | Rate source | ERP integration |
@@ -65,6 +69,10 @@ This proof of concept validates the workflow but uses simulated rates and has no
 | **Phase 3** | Automate intake (monitor a shared mailbox instead of manual paste), match shipments to open POs, write shipment/receipt data back to Acumatica | Live carrier APIs | Acumatica 2025R2 |
 
 This document defines requirements primarily for **Phase 1**, with Phase 2/3 requirements captured so the Phase 1 design doesn't foreclose them.
+
+### 5.1 Rollout approach (confirmed)
+
+Phase 1 launches as a **parallel run**: the shipping manager keeps doing the current manual process as the system of record while using the tool alongside it, so extraction accuracy and estimated rates can be validated against real outcomes before the tool becomes primary. Exit criteria for ending the parallel run (e.g. an accuracy threshold, a minimum number of shipments validated) should be defined before Phase 1 build starts.
 
 ## 6. Functional Requirements
 
@@ -78,12 +86,12 @@ This document defines requirements primarily for **Phase 1**, with Phase 2/3 req
 
 ### 6.2 Freight classification
 - FR-2.1: System defaults freight class by material type (wool = 60, synthetic/polyester = 60, cotton = 55) and allows manual override.
-- FR-2.2: New material types not in the default table require manual freight class entry and should be logged so the default table can be extended over time.
+- FR-2.2: Freight class and material defaults are **owned and maintained inside this tool** (a simple editable config/table), not sourced from Acumatica. New material types not in the default table require manual freight class entry by the shipping manager, who can add them to the table directly.
 
 ### 6.3 Rate shopping
 - FR-3.1: System calculates/retrieves rates for all queued shipments concurrently (not sequentially), across all configured carriers.
 - FR-3.2: Phase 1: rates are estimated using dimensional weight vs. actual weight, freight class multiplier, and an origin-to-Sheboygan zone table.
-- FR-3.3: Phase 2: rates are retrieved from live carrier rating APIs for both negotiated-account carriers and open-market LTL carriers.
+- FR-3.3: Phase 2: rates are retrieved from live carrier rating APIs for both negotiated-account carriers and open-market LTL carriers. Negotiated-account API access (UPS, FedEx, XPO) does not exist yet and must be procured/set up as a prerequisite for Phase 2.
 - FR-3.4: Results are sorted by price ascending and the lowest rate is visually highlighted.
 - FR-3.5: Each result shows carrier, price, transit estimate (when available), and destination.
 
@@ -96,12 +104,14 @@ This document defines requirements primarily for **Phase 1**, with Phase 2/3 req
 ### 6.5 Reporting
 - FR-5.1: Tool shows daily/batch metrics: shipments processed, total cost at chosen rates, savings vs. highest quoted rate.
 - FR-5.2: Tool retains historical shipment/rate/decision records (not just in-session) so spend and carrier performance can be reviewed over time.
+- FR-5.3: During the Phase 1 parallel run, reporting should support comparing tool-estimated rates/extraction against the manual process's actual outcomes, to evaluate exit criteria.
 
 ### 6.6 Acumatica integration (Phase 3)
 - FR-6.1: Match an inbound shipment to an open Purchase Order in Acumatica (by vendor + item + expected date, with manual override if no confident match).
 - FR-6.2: On booking, write shipment and expected receipt information back to the associated Acumatica PO/receipt record.
-- FR-6.3: Vendor and item master data (freight class defaults, standard origins) should be sourced from or reconciled with Acumatica where such data already exists there, to avoid duplicate maintenance.
+- FR-6.3: Vendor and item identifiers used for PO matching should be sourced from Acumatica (as the ERP of record for POs/vendors). Freight-class and material defaults remain owned by this tool per FR-2.2 and are not synced from Acumatica.
 - FR-6.4: Any write-back to Acumatica must be reviewable/undoable by a user before it is treated as final (no silent automated posting without a review step, at least initially).
+- FR-6.5: Phase 2 go-live and Phase 3 go-live each require explicit sign-off from the business owner (Chris Chesebro) before enabling live carrier booking or Acumatica write-back, given the financial and ERP-data impact.
 
 ## 7. Data Requirements
 
@@ -123,10 +133,10 @@ No payroll or HR data is involved in this system. Any supplier contact informati
 | System | Purpose | Phase |
 |---|---|---|
 | Anthropic Claude API | Extract structured shipment data from unstructured supplier emails/PDFs | 1 |
-| Carrier rating APIs (UPS, FedEx, XPO — negotiated; SAIA, Estes, Old Dominion, R+L — open market) | Live rate quotes and, later, booking | 2 |
-| Acumatica 2025R2 (ACM) | Purchase orders, vendors, shipment/receipt write-back | 3 |
+| Carrier rating APIs (UPS, FedEx, XPO — negotiated; SAIA, Estes, Old Dominion, R+L — open market) | Live rate quotes and, later, booking. No credentials/API access exist today — must be set up before Phase 2. | 2 |
+| Acumatica 2025R2 (ACM) | Purchase orders and vendor/item identifiers for PO matching; shipment/receipt write-back | 3 |
 
-Acumatica integration should use the standard Acumatica web service endpoints / Generic Inquiries appropriate to 2025R2, consistent with how other Wigwam Acumatica integrations are built.
+Acumatica integration should use the standard Acumatica web service endpoints / Generic Inquiries appropriate to 2025R2, consistent with how other Wigwam Acumatica integrations are built. Freight-class/material default data is explicitly **not** part of this integration (see FR-2.2/FR-6.3) — it stays owned by this tool.
 
 ## 9. Non-Functional Requirements
 
@@ -140,17 +150,25 @@ Acumatica integration should use the standard Acumatica web service endpoints / 
 
 - Average processing time per shipment (target: under 1 minute of manager time, down from 4–6 minutes).
 - Freight cost savings vs. historical average (via best-rate selection).
-- Extraction accuracy (% of shipments requiring no manual field correction).
+- Extraction accuracy (% of shipments requiring no manual field correction) — tracked explicitly during the Phase 1 parallel run.
 - Phase 3: % of shipments successfully auto-matched to a PO.
 
-## 11. Open Questions
+## 11. Decisions
 
-- Which specific carrier rating APIs are available today with existing negotiated-account credentials (UPS, FedEx, XPO), and who owns those credentials?
-- What is the authoritative source for vendor/material freight-class defaults going forward — maintained in this tool, or pulled from Acumatica item/vendor records?
-- What is the expected cutover plan from the current fully-manual process to Phase 1 (parallel run vs. hard cutover)?
-- Who is the business owner who signs off on Phase 2 (live rates) and Phase 3 (Acumatica write-back) given they involve real financial commitments and ERP data changes?
+Resolved during requirements review (2026-07-24):
 
-## 12. Assumptions
+- **Carrier API access:** None exists today for any carrier (UPS, FedEx, XPO, or LTL market carriers). Procuring/setting up API access is a Phase 2 prerequisite, owned by IT/Systems Admin.
+- **Freight-class/material default data ownership:** Maintained inside this tool, not sourced from or synced with Acumatica.
+- **Phase 1 rollout:** Parallel run alongside the existing manual process, not a hard cutover.
+- **Phase 2/3 sign-off owner:** Chris Chesebro.
+
+## 12. Remaining Open Items
+
+- Exit criteria for ending the Phase 1 parallel run (e.g. minimum shipments validated, accuracy threshold) — needs to be defined before Phase 1 build starts.
+- Which carrier(s) to prioritize first when setting up real API access for Phase 2 (negotiated accounts vs. open-market LTL), and expected timeline for that procurement.
+- Whether Acumatica vendor/item data is already structured in a way that supports confident automatic PO matching (FR-6.1), or whether vendor/item cleanup is needed first.
+
+## 13. Assumptions
 
 - Single fixed destination facility (Sheboygan, WI) for the foreseeable future.
 - Current three material types (wool, synthetic/polyester, cotton yarn) represent the large majority of inbound volume; other materials are handled via manual override initially.
