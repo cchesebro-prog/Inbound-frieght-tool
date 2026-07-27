@@ -80,11 +80,11 @@ Until this is wired up, `po_number_raw` can still be captured (typed or AI-extra
 
 - Login, shipment intake (paste or sample-email buttons), AI extraction with inline correction, batch rate shopping, per-shipment and batch-wide booking, and quote export (single shipment or all as one combined text file).
 - PO-number-driven Acumatica matching (FR-6.1): extract/enter a PO number, look it up, manually confirm the matching PO line (pulls the real Acumatica item description into `material`), or flag as unmatched for Shipping/Purchasing reconciliation — pending the Acumatica secrets above.
+- Freight-class config page (FR-2.2): a "Freight classes" panel (toggle button next to the batch actions) to view, edit, and add material/freight-class defaults, backed by `/api/config/freight-classes`.
 
 ## What's not built yet
 
-- Live carrier rating APIs (Phase 2) — rates are estimated using the freight-class/zone logic in `src/rating.ts`.
+- Live carrier rating APIs (Phase 2) — rates are estimated using the freight-class/zone logic in `src/rating.ts`. Estes Express's Cloud API has been reviewed ahead of getting real access (rate-quotes, BOL/booking, pickup requests, tracking), but no integration code exists yet — see `PHASE1_BUILD_PLAN.md` section 8 open items.
 - Acumatica write-back (still Phase 3, per FR-6.2) — this build only reads PO/vendor/item data for matching; it never writes to Acumatica.
-- Freight-class config page (FR-2.2) — the `/api/config/freight-classes` API exists but there's no UI for it yet; edit the table directly via `wrangler d1 execute` in the meantime.
 - Metrics/history dashboard (FR-5.1/5.3) — the `/api/metrics` API exists but isn't surfaced in the UI.
 - Visual polish — functional but plain; no design pass yet.

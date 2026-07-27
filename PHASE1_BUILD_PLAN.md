@@ -139,7 +139,7 @@ Acumatica write-back (FR-6.2) is still Phase 3 — this build only reads PO/vend
 
 1. ✅ **Foundation** — D1 schema + migrations, Worker skeleton, login/session, deploy pipeline. Deployed to `https://inbound-freight-tool.cchesebro.workers.dev`.
 2. ✅ **Intake & extraction** — paste/upload → server-side Claude API extraction (Haiku 4.5) → regex fallback → correction UI (FR-1.x). Correction UI is inline edit/save on each shipment card.
-3. **Freight class config + rate engine** — rate engine (zone map, freight-class multiplier, dimensional weight) is done and running (FR-3.x). Config **API** exists (`/api/config/freight-classes`); the config **page** UI for FR-2.2 is not built yet.
+3. ✅ **Freight class config + rate engine** — rate engine (zone map, freight-class multiplier, dimensional weight) is done and running (FR-3.x). Config page UI for FR-2.2 is built: a "Freight classes" panel (toggle button in the batch-actions bar) listing the table with inline edit + an add/update row, backed by the existing `/api/config/freight-classes` API.
 4. ✅ **Booking, export, batch actions** — book/export per shipment and batch-wide (FR-4.x): quote table with best-rate highlight, per-shipment Book/Export, batch Book all/Export all (combined text download).
 5. **Reporting** — `/api/metrics` exists; metrics bar, history view, and parallel-run comparison UI (FR-5.x) not built yet.
 6. **Multi-user rollout** — add remaining users' accounts, confirm auth approach with IT, begin the Phase 1 parallel run.
@@ -156,6 +156,7 @@ Acumatica write-back (FR-6.2) is still Phase 3 — this build only reads PO/vend
 - Confirm whether Wigwam already has a standard auth pattern for internal Cloudflare-hosted tools (e.g. Cloudflare Access) that should replace the bespoke username/password login proposed in section 2.
 - Confirm the initial list of users who need Phase 1 access beyond the shipping manager.
 - Confirm Worker/D1 naming and which Cloudflare account/environment this should deploy under.
+- **Phase 2 (Estes Express) groundwork, 2026-07-27:** reviewed the full Estes Cloud API OpenAPI spec (v1.26.30) ahead of getting real account access. Key findings, not yet built: auth needs both a provisioned `apikey` header (one-time via `POST /v1/api-key`, Basic auth) and a per-session bearer JWT (`POST /authenticate`, Basic auth); `POST /v1/rate-quotes` maps directly onto our shipment fields (weight/dims/class/hazmat/origin/destination) and returns `totalCharges`/`transitDays`; booking is two separate calls — `POST /v1/bol` tenders the shipment for a PRO number, then `POST /v1/pickup-requests` schedules the actual truck; `GET /v1/shipments/history` supports lookup by PRO **or by PO number**, which could reuse the same PO number captured for Acumatica matching (FR-6.1). Open questions before writing code: Wigwam's Estes account number, payor/terms convention (prepaid/collect, shipper/consignee/third-party), and whether handling-unit type needs a new shipment field. Each additional Phase 2 carrier (SAIA, Old Dominion, R+L) will need the same spec-review exercise once their docs are available.
 
 ## 9. Status
 
@@ -163,5 +164,5 @@ Acumatica write-back (FR-6.2) is still Phase 3 — this build only reads PO/vend
 - `ANTHROPIC_API_KEY` and `SESSION_SECRET` set as Worker secrets — extraction (FR-1.1/1.2) runs against Claude Haiku 4.5.
 - Deployed and live at `https://inbound-freight-tool.cchesebro.workers.dev`. First user created; login confirmed working.
 - End-to-end loop confirmed working: intake → AI extraction → inline correction → batch rate shopping → per-shipment/batch booking → single/combined quote export.
-- Not yet built: freight-class config page UI (FR-2.2), metrics/history dashboard UI (FR-5.x). Both have working APIs already.
+- Freight-class config page UI (FR-2.2) is now built (see milestone 3). Not yet built: metrics/history dashboard UI (FR-5.x) — the `/api/metrics` API exists but isn't surfaced in the UI.
 - PO matching (FR-6.1) pulled forward from Phase 3: migration `0003_po_matching.sql` and PO-lookup/confirm/flag routes + UI are built (see milestone 7). Blocked on IT provisioning `ACUMATICA_BASE_URL`, `ACUMATICA_ENDPOINT_VERSION`, `ACUMATICA_CLIENT_ID`, `ACUMATICA_CLIENT_SECRET` as Worker secrets — flagged as a setup blocker, same pattern as `ANTHROPIC_API_KEY`.

@@ -82,6 +82,20 @@
     <button class="secondary" id="rate-all-btn">Rate all queued</button>
     <button class="secondary" id="book-all-btn">Book all best rates</button>
     <button class="secondary" id="export-all-btn">Export all quotes</button>
+    <button class="secondary" id="toggle-freight-classes-btn" style="margin-left:auto;">Freight classes</button>
+  </div>
+
+  <div id="freight-classes-panel" style="display:none;">
+    <h2 style="font-size:1rem;">Freight class defaults</h2>
+    <table class="quotes-table">
+      <thead><tr><th>Material</th><th>Freight class</th><th>Last updated</th><th></th></tr></thead>
+      <tbody id="freight-classes-body"></tbody>
+    </table>
+    <div style="display:flex; gap:0.5rem; margin-top:0.75rem;">
+      <input type="text" id="new-material-input" placeholder="Material (e.g. wool yarn)" style="flex:1;" />
+      <input type="number" id="new-freight-class-input" placeholder="Freight class" style="width:120px;" />
+      <button class="small" id="add-freight-class-btn">Add / update</button>
+    </div>
   </div>
 
   <div id="shipments-container"></div>
@@ -217,6 +231,58 @@ Regards, Delta Cotton Yarn LLC`,
     if (!exports || exports.length === 0) return;
     const combined = exports.map((e) => e.text).join('\n\n---\n\n');
     downloadTextFile('all-quotes.txt', combined);
+  });
+
+  const freightClassesPanel = document.getElementById('freight-classes-panel');
+  const freightClassesBody = document.getElementById('freight-classes-body');
+
+  function renderFreightClassRow(row) {
+    return `
+      <tr>
+        <td>${row.material}</td>
+        <td><input type="number" class="freight-class-edit" value="${row.freight_class}" style="width:80px;" /></td>
+        <td>${row.updated_at ?? '—'}</td>
+        <td><button class="small save-freight-class-btn" data-material="${row.material}">Save</button></td>
+      </tr>
+    `;
+  }
+
+  async function loadFreightClasses() {
+    const rows = await api('/api/config/freight-classes');
+    freightClassesBody.innerHTML = rows.map(renderFreightClassRow).join('');
+  }
+
+  document.getElementById('toggle-freight-classes-btn').addEventListener('click', () => {
+    const opening = freightClassesPanel.style.display === 'none';
+    freightClassesPanel.style.display = opening ? 'block' : 'none';
+    if (opening) loadFreightClasses();
+  });
+
+  freightClassesBody.addEventListener('click', async (e) => {
+    const saveBtn = e.target.closest('.save-freight-class-btn');
+    if (!saveBtn) return;
+    const material = saveBtn.dataset.material;
+    const freightClass = Number(saveBtn.closest('tr').querySelector('.freight-class-edit').value);
+    await api('/api/config/freight-classes', {
+      method: 'PUT',
+      body: JSON.stringify({ material, freightClass }),
+    });
+    loadFreightClasses();
+  });
+
+  document.getElementById('add-freight-class-btn').addEventListener('click', async () => {
+    const materialInput = document.getElementById('new-material-input');
+    const classInput = document.getElementById('new-freight-class-input');
+    const material = materialInput.value.trim();
+    const freightClass = Number(classInput.value);
+    if (!material || !freightClass) return;
+    await api('/api/config/freight-classes', {
+      method: 'PUT',
+      body: JSON.stringify({ material, freightClass }),
+    });
+    materialInput.value = '';
+    classInput.value = '';
+    loadFreightClasses();
   });
 
   function downloadTextFile(filename, text) {
