@@ -2,6 +2,16 @@ name = "inbound-freight-tool"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
 
+# Explicit so `wrangler deploy` doesn't warn about relying on defaults.
+# workers_dev = true: this Worker is currently only reachable at the
+# *.workers.dev subdomain (no custom domain configured yet). It's still
+# safe to expose — every /api/* route other than /api/login requires an
+# authenticated session cookie.
+workers_dev = true
+# preview_urls = false: don't generate separate public preview URLs for
+# non-production versions.
+preview_urls = false
+
 [[d1_databases]]
 binding = "DB"
 database_name = "inbound-freight-tool-db"
