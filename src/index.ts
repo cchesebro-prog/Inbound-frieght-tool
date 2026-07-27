@@ -4,6 +4,7 @@ import type { Bindings, Variables } from "./types";
 import { verifyPassword, createSessionToken, verifySessionToken } from "./auth";
 import { extractShipment } from "./extraction";
 import { calculateRates } from "./rating";
+import { lookupPurchaseOrder, normalizePoNumber } from "./acumatica";
 
 type AppEnv = { Bindings: Bindings; Variables: Variables };
 
@@ -20,6 +21,7 @@ const ALLOWED_SHIPMENT_FIELDS = [
   "origin_address",
   "destination_address",
   "ready_date",
+  "po_number_raw",
 ];
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -73,8 +75,8 @@ app.post("/api/shipments", async (c) => {
 
   const result = await c.env.DB.prepare(
     `INSERT INTO shipments
-      (status, raw_input, material, freight_class, weight_lbs, pieces, length_in, width_in, height_in, hazmat, origin_address, ready_date, extraction_method, created_by)
-     VALUES ('queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      (status, raw_input, material, freight_class, weight_lbs, pieces, length_in, width_in, height_in, hazmat, origin_address, ready_date, extraction_method, po_number_raw, created_by)
+     VALUES ('queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       rawInput,
@@ -89,6 +91,7 @@ app.post("/api/shipments", async (c) => {
       data.originAddress,
       data.readyDate,
       method,
+      data.poNumber,
       c.get("userId")
     )
     .run();
@@ -138,6 +141,95 @@ app.patch("/api/shipments/:id", async (c) => {
     .bind(...values, id)
     .run();
 
+  return c.json({ ok: true });
+});
+
+// FR-6.1: look up a vendor-referenced PO number against Acumatica. This never
+// blocks or auto-confirms anything (FR-6.1b) — it just surfaces candidate
+// lines for the shipping manager to verify via /po-confirm.
+app.post("/api/shipments/:id/po-lookup", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ poNumber?: string }>().catch(() => ({}) as { poNumber?: string });
+
+  const shipment = await c.env.DB.prepare("SELECT po_number_raw FROM shipments WHERE id = ?")
+    .bind(id)
+    .first<{ po_number_raw: string | null }>();
+  if (!shipment) return c.json({ error: "Shipment not found" }, 404);
+
+  const normalized = normalizePoNumber(body.poNumber ?? shipment.po_number_raw);
+  if (!normalized) {
+    return c.json({ error: "No PO number to look up — enter one first" }, 400);
+  }
+
+  let match;
+  try {
+    match = await lookupPurchaseOrder(c.env, normalized);
+  } catch (err) {
+    return c.json({ error: `Acumatica lookup failed: ${(err as Error).message}` }, 502);
+  }
+
+  if (!match) {
+    await c.env.DB.prepare(
+      "UPDATE shipments SET po_number_raw = ?, po_reconciliation_status = 'unmatched', po_match_data = NULL WHERE id = ?"
+    )
+      .bind(normalized, id)
+      .run();
+    return c.json({ matched: false });
+  }
+
+  await c.env.DB.prepare(
+    "UPDATE shipments SET po_number_raw = ?, po_reconciliation_status = 'pending_review', po_match_data = ? WHERE id = ?"
+  )
+    .bind(normalized, JSON.stringify(match), id)
+    .run();
+
+  return c.json({ matched: true, po: match });
+});
+
+// FR-6.1b: the shipping manager's manual verification step. Confirming pulls
+// the material off the matched PO line (real Acumatica line data, e.g.
+// "Y5750-057 / 20/1 50Cot/50Poly 057 Charcoal", is far more specific than the
+// AI's guess from email text) rather than overwriting it silently elsewhere.
+app.post("/api/shipments/:id/po-confirm", async (c) => {
+  const id = c.req.param("id");
+  const { lineNbr } = await c.req.json<{ lineNbr: number }>();
+
+  const shipment = await c.env.DB.prepare("SELECT po_match_data FROM shipments WHERE id = ?")
+    .bind(id)
+    .first<{ po_match_data: string | null }>();
+  if (!shipment?.po_match_data) {
+    return c.json({ error: "No pending PO match to confirm — run a lookup first" }, 400);
+  }
+
+  const po = JSON.parse(shipment.po_match_data) as {
+    orderNbr: string;
+    lines: { lineNbr: number; inventoryId: string; lineDescription: string }[];
+  };
+  const line = po.lines.find((l) => l.lineNbr === lineNbr);
+  if (!line) return c.json({ error: "Line not found on the matched PO" }, 400);
+
+  const material = `${line.inventoryId} — ${line.lineDescription}`;
+  await c.env.DB.prepare(
+    `UPDATE shipments
+     SET po_number_matched = ?, po_line_id = ?, po_reconciliation_status = 'confirmed', material = ?
+     WHERE id = ?`
+  )
+    .bind(po.orderNbr, String(lineNbr), material, id)
+    .run();
+
+  return c.json({ ok: true, material });
+});
+
+// FR-6.1d: no PO found, or the manager already knows there isn't one —
+// proceed unlinked rather than blocking, flagged for Shipping/Purchasing to
+// reconcile later.
+app.post("/api/shipments/:id/po-flag-unmatched", async (c) => {
+  const id = c.req.param("id");
+  await c.env.DB.prepare(
+    "UPDATE shipments SET po_reconciliation_status = 'unmatched', po_match_data = NULL WHERE id = ?"
+  )
+    .bind(id)
+    .run();
   return c.json({ ok: true });
 });
 
