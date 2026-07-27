@@ -1,8 +1,8 @@
 # Phase 1 Build Plan — Inbound Freight Tool
 
-**Status:** Draft v1
-**Last updated:** 2026-07-24
-**Depends on:** `REQUIREMENTS.md` (Phase 1 functional requirements, FR-1.x through FR-5.x)
+**Status:** Draft v2
+**Last updated:** 2026-07-27
+**Depends on:** `REQUIREMENTS.md` (Phase 1 functional requirements, FR-1.x through FR-5.x, plus FR-6.1 pulled forward from Phase 3)
 
 This document scopes the actual Phase 1 build: architecture, data model, component breakdown, and implementation order. It does not cover Phase 2 (live carrier APIs) or Phase 3 (Acumatica) beyond making sure Phase 1 doesn't block them.
 
@@ -96,7 +96,15 @@ Phase 1 needs to support the shipping manager plus a small number of other staff
 | booked_at | text | |
 | exported | integer (bool) | whether a quote/confirmation was exported |
 
-Phase 3 will add `po_number_raw`, `po_number_matched`, `po_line_id`, and `po_reconciliation_status` to `shipments` per FR-6.x — not built now, but the schema should leave room for these as additive columns rather than requiring a redesign.
+**Update (2026-07-27): pulled forward from Phase 3.** `po_number_raw`, `po_number_matched`, `po_line_id`, `po_reconciliation_status`, and `po_match_data` (JSON snapshot of the matched Acumatica PO/line, added beyond the original plan so the review UI doesn't need a live Acumatica call per render) were added to `shipments` in migration `0003_po_matching.sql` and are live in the build (see `src/acumatica.ts`, FR-6.1). `po_reconciliation_status` values: `not_applicable` (default), `pending_review`, `confirmed`, `unmatched`.
+
+Real Acumatica data pulled during design (sample PO `P000513`, vendor North Carolina Spinning Mills Inc):
+- PO numbers are `P` + 6-digit zero-padded sequence (`normalizePoNumber()` in `src/acumatica.ts` extracts this pattern from free text per FR-6.1a).
+- `VendorClass = "YARN"` reliably distinguishes raw-material yarn vendors from other vendor types (e.g. `MACHPART`) — not used in the matching code itself (matching is PO-number-driven, not vendor-driven, per FR-6.1) but useful context for anyone validating matches.
+- Real yarn inventory items are specific construction/blend/color codes (e.g. `Y5750-057` = "20/1 50Cot/50Poly 057 Charcoal"), not generic Wool/Synthetic/Cotton buckets — confirms material should come from the matched PO line, not the AI's guess from email text, once a match is confirmed.
+- Freight class (NMFC) is not tracked anywhere in Acumatica — reconfirms FR-2.2 (freight-class defaults stay owned by this tool).
+
+Acumatica write-back (FR-6.2) is still Phase 3 — this build only reads PO/vendor/item data for matching.
 
 ## 4. API Routes (Worker)
 
@@ -113,6 +121,9 @@ Phase 3 will add `po_number_raw`, `po_number_matched`, `po_line_id`, and `po_rec
 | `/api/shipments/book-all` / `/export-all` | POST | Batch actions (FR-4.3) |
 | `/api/config/freight-classes` | GET/PUT | View/edit freight-class default table (FR-2.2) |
 | `/api/metrics` | GET | Daily/batch metrics, parallel-run comparison data (FR-5.1, FR-5.3) |
+| `/api/shipments/:id/po-lookup` | POST | Look up a (typed or extracted) PO number against Acumatica; stores a pending match for review (FR-6.1, FR-6.1a) |
+| `/api/shipments/:id/po-confirm` | POST | Shipping manager confirms a specific matched PO line; pulls that line's material into the shipment (FR-6.1b) |
+| `/api/shipments/:id/po-flag-unmatched` | POST | Proceed unlinked, flag for Shipping/Purchasing reconciliation (FR-6.1d) |
 
 ## 5. Frontend Components
 
@@ -132,11 +143,12 @@ Phase 3 will add `po_number_raw`, `po_number_matched`, `po_line_id`, and `po_rec
 4. ✅ **Booking, export, batch actions** — book/export per shipment and batch-wide (FR-4.x): quote table with best-rate highlight, per-shipment Book/Export, batch Book all/Export all (combined text download).
 5. **Reporting** — `/api/metrics` exists; metrics bar, history view, and parallel-run comparison UI (FR-5.x) not built yet.
 6. **Multi-user rollout** — add remaining users' accounts, confirm auth approach with IT, begin the Phase 1 parallel run.
+7. ⏳ **PO matching (pulled forward from Phase 3, FR-6.1)** — code complete (`src/acumatica.ts`, PO-related routes, UI lookup/confirm/flag panel), blocked on IT provisioning the four `ACUMATICA_*` secrets (see `README.md`). Acumatica write-back (FR-6.2) remains out of scope until Phase 3.
 
 ## 7. Explicitly Out of Scope for Phase 1
 
 - Live carrier rating/booking APIs (Phase 2).
-- Any Acumatica read/write (Phase 3) — schema leaves room for it (section 3) but no integration code is written now.
+- Acumatica write-back (FR-6.2, still Phase 3) — PO/vendor/item **read** access for matching (FR-6.1) was pulled forward; see milestone 7.
 - Role-based permissions beyond a single access level.
 
 ## 8. Open Items
@@ -152,3 +164,4 @@ Phase 3 will add `po_number_raw`, `po_number_matched`, `po_line_id`, and `po_rec
 - Deployed and live at `https://inbound-freight-tool.cchesebro.workers.dev`. First user created; login confirmed working.
 - End-to-end loop confirmed working: intake → AI extraction → inline correction → batch rate shopping → per-shipment/batch booking → single/combined quote export.
 - Not yet built: freight-class config page UI (FR-2.2), metrics/history dashboard UI (FR-5.x). Both have working APIs already.
+- PO matching (FR-6.1) pulled forward from Phase 3: migration `0003_po_matching.sql` and PO-lookup/confirm/flag routes + UI are built (see milestone 7). Blocked on IT provisioning `ACUMATICA_BASE_URL`, `ACUMATICA_ENDPOINT_VERSION`, `ACUMATICA_CLIENT_ID`, `ACUMATICA_CLIENT_SECRET` as Worker secrets — flagged as a setup blocker, same pattern as `ANTHROPIC_API_KEY`.

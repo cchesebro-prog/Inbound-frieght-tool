@@ -1,6 +1,6 @@
 # Inbound Freight Tool — Requirements
 
-**Status:** Draft v4
+**Status:** Draft v5
 **Owner:** Shipping / Logistics (Wigwam Mills)
 **Business owner (Phase 2/3 sign-off):** Chris Chesebro
 **Last updated:** 2026-07-24
@@ -69,6 +69,8 @@ This proof of concept validates the workflow but uses simulated rates and has no
 | **Phase 3** | Automate intake (monitor a shared mailbox instead of manual paste), match shipments to open POs, write shipment/receipt data back to Acumatica | Live carrier APIs | Acumatica 2025R2 |
 
 This document defines requirements primarily for **Phase 1**, with Phase 2/3 requirements captured so the Phase 1 design doesn't foreclose them.
+
+**Update (2026-07-27):** FR-6.1 (PO-number-driven matching, section 6.6) has been pulled forward from Phase 3 into active Phase 1 work — see section 11 for why and `PHASE1_BUILD_PLAN.md` for the build status. FR-6.2 (Acumatica write-back) remains Phase 3.
 
 ### 5.1 Rollout approach (confirmed)
 
@@ -171,6 +173,9 @@ Resolved during requirements review (2026-07-24):
 - **Partial shipments (Phase 3):** Normal and expected; a shipment quantity less than the PO line's remaining quantity is not treated as a mismatch (FR-6.1c).
 - **No PO match found (Phase 3):** Shipment proceeds unlinked through the rest of the workflow and is flagged for manual reconciliation, visible to both Shipping and Purchasing rather than assigned to one owner (FR-6.1d).
 - **PO number normalization rules:** Deliberately deferred — will be catalogued from a sample of real supplier emails once Phase 3 design starts, rather than guessed now.
+- **PO matching scope pull-forward (2026-07-27):** With material identification proving unreliable via hardcoded buckets + AI guesswork, FR-6.1 (PO lookup/matching) was pulled forward into active Phase 1 build rather than waiting for Phase 3. FR-6.2 (Acumatica write-back) stays in Phase 3 — this pull-forward is read-only against Acumatica.
+- **Acumatica findings grounding FR-6.1 (sample PO `P000513` pulled during design):** PO numbers follow a `P` + 6-digit zero-padded format; `VendorClass = "YARN"` distinguishes raw-material yarn vendors from other vendor types (e.g. `MACHPART`); real inventory items use specific construction/blend/color codes (e.g. `Y5750-057`), not the Wool/Synthetic/Cotton buckets in the Phase 0 proof of concept — confirming material should be sourced from the matched PO line once confirmed (FR-6.1b), not the AI's guess from email text; freight class (NMFC) is not tracked in Acumatica at all, reconfirming FR-2.2.
+- **Acumatica API credentials for FR-6.1:** An existing Acumatica API integration credential/pattern is available and can be obtained from IT (confirmed by the business owner); exact connection details (endpoint version, OAuth client) still need to be provisioned for this Worker specifically — tracked as a setup blocker in `PHASE1_BUILD_PLAN.md` / `README.md`, same pattern as the `ANTHROPIC_API_KEY` blocker.
 
 ## 12. Remaining Open Items
 

@@ -27,6 +27,15 @@
   .status-booked { background: #d1fae5; color: #065f46; }
   .status-needs_review { background: #fee2e2; color: #991b1b; }
 
+  .po-badge { font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 999px; margin-left: 0.4rem; }
+  .po-pending_review { background: #fef3c7; color: #92400e; }
+  .po-confirmed { background: #d1fae5; color: #065f46; }
+  .po-unmatched { background: #fee2e2; color: #991b1b; }
+
+  .po-match-panel { border: 1px dashed #d5ddd9; border-radius: 6px; padding: 0.6rem 0.8rem; margin-top: 0.75rem; font-size: 0.85rem; }
+  .po-match-panel table { width: 100%; border-collapse: collapse; margin-top: 0.4rem; }
+  .po-match-panel th, .po-match-panel td { text-align: left; padding: 0.2rem 0.4rem; font-size: 0.8rem; }
+
   .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.5rem; margin: 0.75rem 0; }
   .field-grid label { display: block; font-size: 0.75rem; color: #666; margin-bottom: 0.15rem; }
   .field-grid .field-value { font-size: 0.9rem; }
@@ -120,7 +129,14 @@ Regards, Delta Cotton Yarn LLC`,
     { key: 'height_in', label: 'Height (in)', type: 'number' },
     { key: 'origin_address', label: 'Origin', type: 'text' },
     { key: 'ready_date', label: 'Ready date', type: 'text' },
+    { key: 'po_number_raw', label: 'PO Number (Acumatica)', type: 'text' },
   ];
+
+  const PO_STATUS_LABEL = {
+    pending_review: 'PO match — needs review',
+    confirmed: 'PO confirmed',
+    unmatched: 'PO unmatched — flagged',
+  };
 
   async function api(path, options = {}) {
     const res = await fetch(path, {
@@ -249,12 +265,43 @@ Regards, Delta Cotton Yarn LLC`,
     `;
 
     const canExport = shipment.status === 'rated' || shipment.status === 'booked';
+    const poStatus = shipment.po_reconciliation_status;
+    const poBadge = poStatus && poStatus !== 'not_applicable'
+      ? `<span class="po-badge po-${poStatus}">${PO_STATUS_LABEL[poStatus] ?? poStatus}</span>`
+      : '';
+
+    let poPanelHtml = '';
+    if (poStatus === 'pending_review' && shipment.po_match_data) {
+      const po = JSON.parse(shipment.po_match_data);
+      poPanelHtml = `
+        <div class="po-match-panel">
+          <strong>Matched Acumatica PO ${po.orderNbr}</strong> — ${po.vendorName || po.vendorId} (${po.status})
+          <table>
+            <thead><tr><th>Line</th><th>Item</th><th>Qty</th><th></th></tr></thead>
+            <tbody>
+              ${po.lines.map((l) => `
+                <tr>
+                  <td>${l.lineNbr}</td>
+                  <td>${l.inventoryId} — ${l.lineDescription}</td>
+                  <td>${l.orderQty} ${l.uom}</td>
+                  <td><button class="small confirm-po-btn" data-shipment="${shipment.id}" data-line="${l.lineNbr}">Confirm this line</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <button class="secondary small flag-po-btn" data-shipment="${shipment.id}" style="margin-top:0.4rem;">Not a match — flag for reconciliation</button>
+        </div>
+      `;
+    }
 
     return `
       <div class="shipment-card" data-id="${shipment.id}">
         <div class="card-header">
           <h3>#${shipment.id} — ${shipment.material ?? 'Unknown material'}</h3>
-          <span class="status-badge status-${shipment.status}">${shipment.status.replace('_', ' ')}</span>
+          <span>
+            <span class="status-badge status-${shipment.status}">${shipment.status.replace('_', ' ')}</span>
+            ${poBadge}
+          </span>
         </div>
         <div class="card-fields" data-mode="view">
           <div class="field-grid">${fieldsHtml}</div>
@@ -262,8 +309,10 @@ Regards, Delta Cotton Yarn LLC`,
         <div class="card-actions">
           <button class="secondary small edit-toggle-btn" data-shipment="${shipment.id}">Edit</button>
           <button class="secondary small save-btn" data-shipment="${shipment.id}" style="display:none;">Save</button>
+          <button class="secondary small lookup-po-btn" data-shipment="${shipment.id}">Look up PO</button>
           ${canExport ? `<a class="btn-link" href="/api/shipments/${shipment.id}/export">Export</a>` : ''}
         </div>
+        ${poPanelHtml}
         ${quotesHtml}
       </div>
     `;
@@ -273,8 +322,28 @@ Regards, Delta Cotton Yarn LLC`,
     const editBtn = e.target.closest('.edit-toggle-btn');
     const saveBtn = e.target.closest('.save-btn');
     const bookBtn = e.target.closest('.book-btn');
+    const lookupPoBtn = e.target.closest('.lookup-po-btn');
+    const confirmPoBtn = e.target.closest('.confirm-po-btn');
+    const flagPoBtn = e.target.closest('.flag-po-btn');
 
-    if (editBtn) {
+    if (lookupPoBtn) {
+      const id = lookupPoBtn.dataset.shipment;
+      const result = await api(`/api/shipments/${id}/po-lookup`, { method: 'POST', body: '{}' });
+      if (result.error) alert(result.error);
+      else if (result.matched === false) alert('No matching PO found in Acumatica — flagged for reconciliation.');
+      loadShipments();
+    } else if (confirmPoBtn) {
+      const { shipment: id, line } = confirmPoBtn.dataset;
+      await api(`/api/shipments/${id}/po-confirm`, {
+        method: 'POST',
+        body: JSON.stringify({ lineNbr: Number(line) }),
+      });
+      loadShipments();
+    } else if (flagPoBtn) {
+      const id = flagPoBtn.dataset.shipment;
+      await api(`/api/shipments/${id}/po-flag-unmatched`, { method: 'POST', body: '{}' });
+      loadShipments();
+    } else if (editBtn) {
       const card = editBtn.closest('.shipment-card');
       const fields = card.querySelector('.card-fields');
       fields.dataset.mode = 'edit';
