@@ -34,20 +34,31 @@ npx wrangler secret put SESSION_SECRET
 npx wrangler dev --local-protocol https
 ```
 
-Create your first user directly against the local D1 database (there's no signup flow by design — see `PHASE1_BUILD_PLAN.md` section 2):
+There's no signup flow by design (see `PHASE1_BUILD_PLAN.md` section 2) — accounts are inserted directly into D1. First, generate a password hash locally (this never sends your password anywhere, including to this repo — it just prints a salted hash to your terminal):
+
+```bash
+node scripts/hash-password.mjs "your password"
+```
+
+Then insert the user against the **local** D1 (for `wrangler dev` testing):
 
 ```bash
 npx wrangler d1 execute inbound-freight-tool-db --local --command \
-  "INSERT INTO users (name, email, password_hash) VALUES ('Your Name', 'you@wigwam.com', '<hash>')"
+  "INSERT INTO users (name, email, password_hash) VALUES ('Your Name', 'you@wigwam.com', '<hash from above>')"
 ```
-
-Generate a password hash with the `hashPassword` helper in `src/auth.ts` (e.g. via a one-off local script) — it uses PBKDF2 and is not a plain string you can type by hand.
 
 ## Deploying
 
 ```bash
 npm run db:migrate:remote
 npm run deploy
+```
+
+After the first deploy, create your first real user against the **remote** D1 (drop `--local`) so you can actually log in to the deployed Worker:
+
+```bash
+npx wrangler d1 execute inbound-freight-tool-db --remote --command \
+  "INSERT INTO users (name, email, password_hash) VALUES ('Your Name', 'you@wigwam.com', '<hash from scripts/hash-password.mjs>')"
 ```
 
 ## What's not built yet
