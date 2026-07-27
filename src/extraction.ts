@@ -42,7 +42,10 @@ async function extractWithClaude(rawInput: string, apiKey: string): Promise<Extr
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      // Haiku 4.5: this is a small structured-extraction task (short email in,
+      // small JSON object out) that doesn't need Sonnet-tier reasoning, and
+      // Haiku is roughly 3x cheaper per token.
+      model: "claude-haiku-4-5",
       max_tokens: 512,
       messages: [{ role: "user", content: EXTRACTION_PROMPT + rawInput }],
     }),
