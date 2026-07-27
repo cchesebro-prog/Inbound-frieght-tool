@@ -144,10 +144,10 @@ Phase 3 will add `po_number_raw`, `po_number_matched`, `po_line_id`, and `po_rec
 - Confirm whether Wigwam already has a standard auth pattern for internal Cloudflare-hosted tools (e.g. Cloudflare Access) that should replace the bespoke username/password login proposed in section 2.
 - Confirm the initial list of users who need Phase 1 access beyond the shipping manager.
 - Confirm Worker/D1 naming and which Cloudflare account/environment this should deploy under.
-- **Setup blocker:** no Anthropic API key exists yet for this tool. Without one, AI extraction (FR-1.1/1.2) can't be exercised and the tool falls back to the regex-only path (FR-1.3). Need to provision a key and decide ownership/billing before Phase 1 can be tested or used end-to-end.
 
 ## 9. Status
 
 - D1 database provisioned (`inbound-freight-tool-db`) and migrations 0001/0002 applied in the Wigwam Cloudflare account.
+- `ANTHROPIC_API_KEY` and `SESSION_SECRET` set as Worker secrets — extraction (FR-1.1/1.2) can now run against Claude Haiku 4.5 instead of falling back to regex-only.
 - Worker code scaffolded (see repo `src/`) but not yet deployed — deployment needs `wrangler deploy` run from a machine/CI with Cloudflare credentials.
-- Blocked on: Anthropic API key (section 8).
+- No remaining blockers on exercising the Phase 1 flow end-to-end once deployed (or via local `wrangler dev`).
