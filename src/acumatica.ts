@@ -6,6 +6,11 @@ import type { Bindings } from "./types";
 // pattern out of surrounding text rather than requiring an exact-string match.
 const PO_NUMBER_PATTERN = /P\d{6}/i;
 
+// No outbound fetch() here is allowed to hang indefinitely — a slow/wedged
+// Acumatica instance would otherwise tie up the Worker request until the
+// platform's own limit kills it.
+const FETCH_TIMEOUT_MS = 10_000;
+
 export function normalizePoNumber(rawText: string | null | undefined): string | null {
   if (!rawText) return null;
   const match = rawText.match(PO_NUMBER_PATTERN);
@@ -72,6 +77,7 @@ async function getAccessToken(env: Bindings): Promise<string> {
       client_secret: env.ACUMATICA_CLIENT_SECRET,
       scope: "api",
     }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -100,6 +106,7 @@ export async function lookupPurchaseOrder(
 
   const response = await fetch(url, {
     headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
 
   if (response.status === 404) return null;

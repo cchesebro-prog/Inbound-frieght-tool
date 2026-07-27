@@ -28,3 +28,4 @@ binding = "ASSETS"
 #   ACUMATICA_ENDPOINT_VERSION Contract-based REST endpoint version published for this instance
 #   ACUMATICA_CLIENT_ID        OAuth 2.0 client-credentials client ID
 #   ACUMATICA_CLIENT_SECRET    OAuth 2.0 client-credentials client secret
+#   ADMIN_RESET_TOKEN          Shared secret for POST /api/admin/reset-lock (clears a stuck batch-operations lock)

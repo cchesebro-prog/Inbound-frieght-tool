@@ -37,6 +37,11 @@ export async function extractShipment(
   }
 }
 
+// Generous relative to acumatica.ts's timeout since this is a live LLM call,
+// but still bounded — a hung Anthropic request must fall back to regex
+// extraction rather than hang the whole "add shipment" request.
+const CLAUDE_FETCH_TIMEOUT_MS = 20_000;
+
 async function extractWithClaude(rawInput: string, apiKey: string): Promise<ExtractedShipment> {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -53,6 +58,7 @@ async function extractWithClaude(rawInput: string, apiKey: string): Promise<Extr
       max_tokens: 512,
       messages: [{ role: "user", content: EXTRACTION_PROMPT + rawInput }],
     }),
+    signal: AbortSignal.timeout(CLAUDE_FETCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {

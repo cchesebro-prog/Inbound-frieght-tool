@@ -106,6 +106,15 @@ Real Acumatica data pulled during design (sample PO `P000513`, vendor North Caro
 
 Acumatica write-back (FR-6.2) is still Phase 3 — this build only reads PO/vendor/item data for matching.
 
+**`locks`** (added 2026-07-27, migration `0004_locks.sql`)
+| column | type | notes |
+|---|---|---|
+| name | text PK | e.g. `batch_operations` |
+| acquired_at | text | |
+| acquired_by | integer FK → users | |
+
+Serializes `rate-batch`/`book-all`/`export-all` (see `src/locks.ts`) since all three read/write overlapping shipment, quote, and booking rows and would otherwise race if two users triggered them at the same time. A stuck row (holder crashed before release) is cleared via `POST /api/admin/reset-lock`, a token-gated endpoint — see section 4 and `README.md` "Clearing a stuck batch-operations lock". This is the escape hatch called for in the Operability NFR (REQUIREMENTS.md section 9): no lock should ever require a redeploy to clear.
+
 ## 4. API Routes (Worker)
 
 | Route | Method | Purpose |
@@ -124,6 +133,7 @@ Acumatica write-back (FR-6.2) is still Phase 3 — this build only reads PO/vend
 | `/api/shipments/:id/po-lookup` | POST | Look up a (typed or extracted) PO number against Acumatica; stores a pending match for review (FR-6.1, FR-6.1a) |
 | `/api/shipments/:id/po-confirm` | POST | Shipping manager confirms a specific matched PO line; pulls that line's material into the shipment (FR-6.1b) |
 | `/api/shipments/:id/po-flag-unmatched` | POST | Proceed unlinked, flag for Shipping/Purchasing reconciliation (FR-6.1d) |
+| `/api/admin/reset-lock` | POST | Clear a stuck `locks` row (all, or one by `lockName`); gated by the `x-admin-token` header matching `ADMIN_RESET_TOKEN`, not session auth |
 
 ## 5. Frontend Components
 
@@ -144,6 +154,7 @@ Acumatica write-back (FR-6.2) is still Phase 3 — this build only reads PO/vend
 5. **Reporting** — `/api/metrics` exists; metrics bar, history view, and parallel-run comparison UI (FR-5.x) not built yet.
 6. **Multi-user rollout** — add remaining users' accounts, confirm auth approach with IT, begin the Phase 1 parallel run.
 7. ⏳ **PO matching (pulled forward from Phase 3, FR-6.1)** — code complete (`src/acumatica.ts`, PO-related routes, UI lookup/confirm/flag panel), blocked on IT provisioning the four `ACUMATICA_*` secrets (see `README.md`). Acumatica write-back (FR-6.2) remains out of scope until Phase 3.
+8. ✅ **Operational hardening** — batch-operations lock (`src/locks.ts`, migration `0004_locks.sql`) serializing rate-batch/book-all/export-all, with a token-gated `/api/admin/reset-lock` escape hatch; explicit timeouts added to every outbound `fetch()` (Anthropic in `src/extraction.ts`, Acumatica in `src/acumatica.ts`). Satisfies the Operability/Reliability NFRs added to REQUIREMENTS.md section 9.
 
 ## 7. Explicitly Out of Scope for Phase 1
 
@@ -166,3 +177,4 @@ Acumatica write-back (FR-6.2) is still Phase 3 — this build only reads PO/vend
 - End-to-end loop confirmed working: intake → AI extraction → inline correction → batch rate shopping → per-shipment/batch booking → single/combined quote export.
 - Freight-class config page UI (FR-2.2) is now built (see milestone 3). Not yet built: metrics/history dashboard UI (FR-5.x) — the `/api/metrics` API exists but isn't surfaced in the UI.
 - PO matching (FR-6.1) pulled forward from Phase 3: migration `0003_po_matching.sql` and PO-lookup/confirm/flag routes + UI are built (see milestone 7). Blocked on IT provisioning `ACUMATICA_BASE_URL`, `ACUMATICA_ENDPOINT_VERSION`, `ACUMATICA_CLIENT_ID`, `ACUMATICA_CLIENT_SECRET` as Worker secrets — flagged as a setup blocker, same pattern as `ANTHROPIC_API_KEY`.
+- Operational hardening (see milestone 8) is live: migration `0004_locks.sql`, `src/locks.ts`, `/api/admin/reset-lock`, and outbound-fetch timeouts. Requires `ADMIN_RESET_TOKEN` as a new Worker secret (see `README.md` "Clearing a stuck batch-operations lock") before the reset endpoint can be used — flagged as a setup item, though its absence only blocks the reset endpoint, not normal app operation.

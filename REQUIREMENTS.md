@@ -152,6 +152,8 @@ Acumatica integration should use the standard Acumatica web service endpoints / 
 - **Auditability:** Every rate decision and (later) Acumatica write-back should be traceable to a user and timestamp.
 - **Access control:** Tool access limited to shipping/logistics staff and relevant IT admins; Acumatica write-back (Phase 3) restricted further to avoid unauthorized PO/receipt changes.
 - **Data handling:** No PII beyond ordinary business contact info; no payroll or HR data of any kind is stored or processed by this tool.
+- **Operability:** Any internal lock used to serialize concurrent operations (e.g. the batch rate/book/export actions) must have an operator-triggerable reset, so a stuck lock never requires a full redeploy to clear.
+- **Reliability:** Every outbound network call to a third-party API (Anthropic, Acumatica, and future carrier APIs) must have an explicit timeout, so a slow or unresponsive external service cannot hang a request indefinitely.
 
 ## 10. Success Metrics
 
@@ -176,6 +178,7 @@ Resolved during requirements review (2026-07-24):
 - **PO matching scope pull-forward (2026-07-27):** With material identification proving unreliable via hardcoded buckets + AI guesswork, FR-6.1 (PO lookup/matching) was pulled forward into active Phase 1 build rather than waiting for Phase 3. FR-6.2 (Acumatica write-back) stays in Phase 3 — this pull-forward is read-only against Acumatica.
 - **Acumatica findings grounding FR-6.1 (sample PO `P000513` pulled during design):** PO numbers follow a `P` + 6-digit zero-padded format; `VendorClass = "YARN"` distinguishes raw-material yarn vendors from other vendor types (e.g. `MACHPART`); real inventory items use specific construction/blend/color codes (e.g. `Y5750-057`), not the Wool/Synthetic/Cotton buckets in the Phase 0 proof of concept — confirming material should be sourced from the matched PO line once confirmed (FR-6.1b), not the AI's guess from email text; freight class (NMFC) is not tracked in Acumatica at all, reconfirming FR-2.2.
 - **Acumatica API credentials for FR-6.1:** An existing Acumatica API integration credential/pattern is available and can be obtained from IT (confirmed by the business owner); exact connection details (endpoint version, OAuth client) still need to be provisioned for this Worker specifically — tracked as a setup blocker in `PHASE1_BUILD_PLAN.md` / `README.md`, same pattern as the `ANTHROPIC_API_KEY` blocker.
+- **Stuck-lock recovery and outbound timeouts (2026-07-27):** the batch endpoints (rate-batch/book-all/export-all) share a serialization lock (see `PHASE1_BUILD_PLAN.md` section 3) with no escape hatch other than redeploying if a request dies mid-operation and never releases it. Added a token-gated reset endpoint as the escape hatch, and added an explicit timeout to every outbound `fetch()` call (Anthropic, Acumatica) so a slow/unresponsive external service can't hang a request — see the Operability/Reliability NFRs added to section 9.
 
 ## 12. Remaining Open Items
 

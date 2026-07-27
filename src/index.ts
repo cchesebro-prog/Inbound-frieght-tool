@@ -5,6 +5,7 @@ import { verifyPassword, createSessionToken, verifySessionToken } from "./auth";
 import { extractShipment } from "./extraction";
 import { calculateRates } from "./rating";
 import { lookupPurchaseOrder, normalizePoNumber } from "./acumatica";
+import { withLock, BATCH_OPERATIONS_LOCK, LockHeldError } from "./locks";
 
 type AppEnv = { Bindings: Bindings; Variables: Variables };
 
@@ -236,39 +237,46 @@ app.post("/api/shipments/:id/po-flag-unmatched", async (c) => {
 app.post("/api/shipments/rate-batch", async (c) => {
   const { shipmentIds } = await c.req.json<{ shipmentIds: number[] }>();
 
-  const results = await Promise.all(
-    shipmentIds.map(async (id) => {
-      const shipment = await c.env.DB.prepare("SELECT * FROM shipments WHERE id = ?")
-        .bind(id)
-        .first<Record<string, unknown>>();
-      if (!shipment) return { id, quotes: [] };
+  try {
+    const results = await withLock(c.env.DB, BATCH_OPERATIONS_LOCK, c.get("userId"), async () =>
+      Promise.all(
+        shipmentIds.map(async (id) => {
+          const shipment = await c.env.DB.prepare("SELECT * FROM shipments WHERE id = ?")
+            .bind(id)
+            .first<Record<string, unknown>>();
+          if (!shipment) return { id, quotes: [] };
 
-      const originState =
-        String(shipment.origin_address ?? "").match(/,\s*([A-Z]{2})\s*\d{5}/)?.[1] ?? "WI";
+          const originState =
+            String(shipment.origin_address ?? "").match(/,\s*([A-Z]{2})\s*\d{5}/)?.[1] ?? "WI";
 
-      const quotes = calculateRates({
-        weightLbs: Number(shipment.weight_lbs) || 0,
-        lengthIn: Number(shipment.length_in) || 0,
-        widthIn: Number(shipment.width_in) || 0,
-        heightIn: Number(shipment.height_in) || 0,
-        freightClass: Number(shipment.freight_class) || 60,
-        originState,
-      });
+          const quotes = calculateRates({
+            weightLbs: Number(shipment.weight_lbs) || 0,
+            lengthIn: Number(shipment.length_in) || 0,
+            widthIn: Number(shipment.width_in) || 0,
+            heightIn: Number(shipment.height_in) || 0,
+            freightClass: Number(shipment.freight_class) || 60,
+            originState,
+          });
 
-      for (const [index, quote] of quotes.entries()) {
-        await c.env.DB.prepare(
-          "INSERT INTO carrier_quotes (shipment_id, carrier, price, is_best) VALUES (?, ?, ?, ?)"
-        )
-          .bind(id, quote.carrier, quote.price, index === 0 ? 1 : 0)
-          .run();
-      }
+          for (const [index, quote] of quotes.entries()) {
+            await c.env.DB.prepare(
+              "INSERT INTO carrier_quotes (shipment_id, carrier, price, is_best) VALUES (?, ?, ?, ?)"
+            )
+              .bind(id, quote.carrier, quote.price, index === 0 ? 1 : 0)
+              .run();
+          }
 
-      await c.env.DB.prepare("UPDATE shipments SET status = 'rated' WHERE id = ?").bind(id).run();
-      return { id, quotes };
-    })
-  );
+          await c.env.DB.prepare("UPDATE shipments SET status = 'rated' WHERE id = ?").bind(id).run();
+          return { id, quotes };
+        })
+      )
+    );
 
-  return c.json(results);
+    return c.json(results);
+  } catch (err) {
+    if (err instanceof LockHeldError) return c.json({ error: err.message }, 409);
+    throw err;
+  }
 });
 
 app.post("/api/shipments/:id/book", async (c) => {
@@ -286,31 +294,39 @@ app.post("/api/shipments/:id/book", async (c) => {
 });
 
 app.post("/api/shipments/book-all", async (c) => {
-  const { results: rated } = await c.env.DB.prepare(
-    "SELECT id FROM shipments WHERE status = 'rated'"
-  ).all<{ id: number }>();
+  try {
+    const bookedIds = await withLock(c.env.DB, BATCH_OPERATIONS_LOCK, c.get("userId"), async () => {
+      const { results: rated } = await c.env.DB.prepare(
+        "SELECT id FROM shipments WHERE status = 'rated'"
+      ).all<{ id: number }>();
 
-  const bookedIds: number[] = [];
-  for (const shipment of rated) {
-    const best = await c.env.DB.prepare(
-      "SELECT id FROM carrier_quotes WHERE shipment_id = ? AND is_best = 1"
-    )
-      .bind(shipment.id)
-      .first<{ id: number }>();
-    if (!best) continue;
+      const ids: number[] = [];
+      for (const shipment of rated) {
+        const best = await c.env.DB.prepare(
+          "SELECT id FROM carrier_quotes WHERE shipment_id = ? AND is_best = 1"
+        )
+          .bind(shipment.id)
+          .first<{ id: number }>();
+        if (!best) continue;
 
-    await c.env.DB.prepare(
-      "INSERT INTO booking_decisions (shipment_id, chosen_quote_id, booked_by) VALUES (?, ?, ?)"
-    )
-      .bind(shipment.id, best.id, c.get("userId"))
-      .run();
-    await c.env.DB.prepare("UPDATE shipments SET status = 'booked' WHERE id = ?")
-      .bind(shipment.id)
-      .run();
-    bookedIds.push(shipment.id);
+        await c.env.DB.prepare(
+          "INSERT INTO booking_decisions (shipment_id, chosen_quote_id, booked_by) VALUES (?, ?, ?)"
+        )
+          .bind(shipment.id, best.id, c.get("userId"))
+          .run();
+        await c.env.DB.prepare("UPDATE shipments SET status = 'booked' WHERE id = ?")
+          .bind(shipment.id)
+          .run();
+        ids.push(shipment.id);
+      }
+      return ids;
+    });
+
+    return c.json({ booked: bookedIds });
+  } catch (err) {
+    if (err instanceof LockHeldError) return c.json({ error: err.message }, 409);
+    throw err;
   }
-
-  return c.json({ booked: bookedIds });
 });
 
 async function buildExportText(
@@ -373,23 +389,31 @@ app.get("/api/shipments/:id/export", async (c) => {
 });
 
 app.post("/api/shipments/export-all", async (c) => {
-  const { results: shipments } = await c.env.DB.prepare(
-    "SELECT id FROM shipments WHERE status IN ('rated', 'booked')"
-  ).all<{ id: number }>();
+  try {
+    const exports = await withLock(c.env.DB, BATCH_OPERATIONS_LOCK, c.get("userId"), async () => {
+      const { results: shipments } = await c.env.DB.prepare(
+        "SELECT id FROM shipments WHERE status IN ('rated', 'booked')"
+      ).all<{ id: number }>();
 
-  const exports: { shipmentId: number; text: string }[] = [];
-  for (const shipment of shipments) {
-    const result = await buildExportText(c.env.DB, shipment.id);
-    if (!result) continue;
-    if (result.bookingId !== null) {
-      await c.env.DB.prepare("UPDATE booking_decisions SET exported = 1 WHERE id = ?")
-        .bind(result.bookingId)
-        .run();
-    }
-    exports.push({ shipmentId: shipment.id, text: result.text });
+      const out: { shipmentId: number; text: string }[] = [];
+      for (const shipment of shipments) {
+        const result = await buildExportText(c.env.DB, shipment.id);
+        if (!result) continue;
+        if (result.bookingId !== null) {
+          await c.env.DB.prepare("UPDATE booking_decisions SET exported = 1 WHERE id = ?")
+            .bind(result.bookingId)
+            .run();
+        }
+        out.push({ shipmentId: shipment.id, text: result.text });
+      }
+      return out;
+    });
+
+    return c.json({ exports });
+  } catch (err) {
+    if (err instanceof LockHeldError) return c.json({ error: err.message }, 409);
+    throw err;
   }
-
-  return c.json({ exports });
 });
 
 app.get("/api/config/freight-classes", async (c) => {
@@ -432,6 +456,27 @@ app.get("/api/metrics", async (c) => {
     processed: processed?.count ?? 0,
     totalBookedCost: bookedCost?.total ?? 0,
   });
+});
+
+// Escape hatch for a stuck batch-operations lock (src/locks.ts) — e.g. a
+// request that acquired the lock died before reaching its release step.
+// Deliberately not behind the session-cookie auth (requireAuth): if the app
+// itself is wedged, whoever's clearing this shouldn't depend on a working
+// login. Auth is the shared ADMIN_RESET_TOKEN instead.
+app.post("/api/admin/reset-lock", async (c) => {
+  const token = c.req.header("x-admin-token");
+  if (!token || token !== c.env.ADMIN_RESET_TOKEN) {
+    return c.json({ error: "Not authorized" }, 401);
+  }
+
+  const { lockName } = await c.req.json<{ lockName?: string }>().catch(() => ({}) as { lockName?: string });
+  if (lockName) {
+    await c.env.DB.prepare("DELETE FROM locks WHERE name = ?").bind(lockName).run();
+  } else {
+    await c.env.DB.prepare("DELETE FROM locks").run();
+  }
+
+  return c.json({ ok: true });
 });
 
 // Fallback for anything not served as a static asset from /public.
