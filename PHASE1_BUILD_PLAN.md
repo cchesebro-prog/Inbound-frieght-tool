@@ -126,11 +126,11 @@ Phase 3 will add `po_number_raw`, `po_number_matched`, `po_line_id`, and `po_rec
 
 ## 6. Milestones
 
-1. **Foundation** — D1 schema + migrations, Worker skeleton, login/session, deploy pipeline.
-2. **Intake & extraction** — paste/upload → server-side Claude API extraction → regex fallback → correction UI (FR-1.x).
-3. **Freight class config + rate engine** — port the PoC's freight-class multiplier table, zone map, and dimensional-weight logic into Worker-side rate calculation, run concurrently across a batch (FR-2.x, FR-3.x).
-4. **Booking, export, batch actions** — book/export per shipment and batch-wide (FR-4.x).
-5. **Reporting** — metrics bar, history view, parallel-run comparison (FR-5.x).
+1. ✅ **Foundation** — D1 schema + migrations, Worker skeleton, login/session, deploy pipeline. Deployed to `https://inbound-freight-tool.cchesebro.workers.dev`.
+2. ✅ **Intake & extraction** — paste/upload → server-side Claude API extraction (Haiku 4.5) → regex fallback → correction UI (FR-1.x). Correction UI is inline edit/save on each shipment card.
+3. **Freight class config + rate engine** — rate engine (zone map, freight-class multiplier, dimensional weight) is done and running (FR-3.x). Config **API** exists (`/api/config/freight-classes`); the config **page** UI for FR-2.2 is not built yet.
+4. ✅ **Booking, export, batch actions** — book/export per shipment and batch-wide (FR-4.x): quote table with best-rate highlight, per-shipment Book/Export, batch Book all/Export all (combined text download).
+5. **Reporting** — `/api/metrics` exists; metrics bar, history view, and parallel-run comparison UI (FR-5.x) not built yet.
 6. **Multi-user rollout** — add remaining users' accounts, confirm auth approach with IT, begin the Phase 1 parallel run.
 
 ## 7. Explicitly Out of Scope for Phase 1
@@ -148,6 +148,7 @@ Phase 3 will add `po_number_raw`, `po_number_matched`, `po_line_id`, and `po_rec
 ## 9. Status
 
 - D1 database provisioned (`inbound-freight-tool-db`) and migrations 0001/0002 applied in the Wigwam Cloudflare account.
-- `ANTHROPIC_API_KEY` and `SESSION_SECRET` set as Worker secrets — extraction (FR-1.1/1.2) can now run against Claude Haiku 4.5 instead of falling back to regex-only.
-- Worker code scaffolded (see repo `src/`) but not yet deployed — deployment needs `wrangler deploy` run from a machine/CI with Cloudflare credentials.
-- No remaining blockers on exercising the Phase 1 flow end-to-end once deployed (or via local `wrangler dev`).
+- `ANTHROPIC_API_KEY` and `SESSION_SECRET` set as Worker secrets — extraction (FR-1.1/1.2) runs against Claude Haiku 4.5.
+- Deployed and live at `https://inbound-freight-tool.cchesebro.workers.dev`. First user created; login confirmed working.
+- End-to-end loop confirmed working: intake → AI extraction → inline correction → batch rate shopping → per-shipment/batch booking → single/combined quote export.
+- Not yet built: freight-class config page UI (FR-2.2), metrics/history dashboard UI (FR-5.x). Both have working APIs already.
