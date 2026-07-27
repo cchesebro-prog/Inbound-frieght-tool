@@ -7,6 +7,10 @@ Internal tool for automating Wigwam Mills' inbound raw-material freight quoting 
 
 This is the Phase 1 scaffold: a Cloudflare Worker (Hono) with a D1 database, server-side Claude API extraction, and estimated (not live) carrier rate calculation. See `PHASE1_BUILD_PLAN.md` for what's in and out of scope.
 
+## ⚠ Setup blocker: Anthropic API key
+
+There is no Anthropic API key provisioned yet for this tool. Without one, `ANTHROPIC_API_KEY` can't be set (see Local setup below) and shipment extraction (FR-1.1/FR-1.2) will always fall through to the much cruder regex fallback (FR-1.3) instead of actually doing AI extraction. Getting a key — and deciding who owns/pays for it — needs to happen before Phase 1 can be meaningfully tested or used for real, though the rest of the flow (manual field entry, rate shopping, booking) can still be exercised without it.
+
 ## Stack
 
 - [Hono](https://hono.dev) on Cloudflare Workers
@@ -26,7 +30,8 @@ npx wrangler d1 create inbound-freight-tool-db
 # Apply migrations locally:
 npm run db:migrate:local
 
-# Secrets used by the Worker (never commit these):
+# Secrets used by the Worker (never commit these).
+# ANTHROPIC_API_KEY is currently a setup blocker — see the note above.
 npx wrangler secret put ANTHROPIC_API_KEY
 npx wrangler secret put SESSION_SECRET
 
