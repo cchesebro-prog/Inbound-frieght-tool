@@ -97,10 +97,33 @@ app.post("/api/shipments", async (c) => {
 });
 
 app.get("/api/shipments", async (c) => {
-  const { results } = await c.env.DB.prepare(
+  const { results: shipments } = await c.env.DB.prepare(
     "SELECT * FROM shipments ORDER BY created_at DESC LIMIT 200"
-  ).all();
-  return c.json(results);
+  ).all<Record<string, unknown>>();
+
+  if (shipments.length === 0) return c.json([]);
+
+  const ids = shipments.map((s) => s.id as number);
+  const placeholders = ids.map(() => "?").join(", ");
+  const { results: quotes } = await c.env.DB.prepare(
+    `SELECT * FROM carrier_quotes WHERE shipment_id IN (${placeholders}) ORDER BY price ASC`
+  )
+    .bind(...ids)
+    .all<Record<string, unknown>>();
+
+  const quotesByShipment = new Map<number, Record<string, unknown>[]>();
+  for (const quote of quotes) {
+    const shipmentId = quote.shipment_id as number;
+    const list = quotesByShipment.get(shipmentId) ?? [];
+    list.push(quote);
+    quotesByShipment.set(shipmentId, list);
+  }
+
+  const enriched = shipments.map((s) => ({
+    ...s,
+    quotes: quotesByShipment.get(s.id as number) ?? [],
+  }));
+  return c.json(enriched);
 });
 
 app.patch("/api/shipments/:id", async (c) => {
@@ -168,6 +191,113 @@ app.post("/api/shipments/:id/book", async (c) => {
   await c.env.DB.prepare("UPDATE shipments SET status = 'booked' WHERE id = ?").bind(id).run();
 
   return c.json({ ok: true });
+});
+
+app.post("/api/shipments/book-all", async (c) => {
+  const { results: rated } = await c.env.DB.prepare(
+    "SELECT id FROM shipments WHERE status = 'rated'"
+  ).all<{ id: number }>();
+
+  const bookedIds: number[] = [];
+  for (const shipment of rated) {
+    const best = await c.env.DB.prepare(
+      "SELECT id FROM carrier_quotes WHERE shipment_id = ? AND is_best = 1"
+    )
+      .bind(shipment.id)
+      .first<{ id: number }>();
+    if (!best) continue;
+
+    await c.env.DB.prepare(
+      "INSERT INTO booking_decisions (shipment_id, chosen_quote_id, booked_by) VALUES (?, ?, ?)"
+    )
+      .bind(shipment.id, best.id, c.get("userId"))
+      .run();
+    await c.env.DB.prepare("UPDATE shipments SET status = 'booked' WHERE id = ?")
+      .bind(shipment.id)
+      .run();
+    bookedIds.push(shipment.id);
+  }
+
+  return c.json({ booked: bookedIds });
+});
+
+async function buildExportText(
+  db: Bindings["DB"],
+  shipmentId: number
+): Promise<{ text: string; bookingId: number | null } | null> {
+  const shipment = await db.prepare("SELECT * FROM shipments WHERE id = ?")
+    .bind(shipmentId)
+    .first<Record<string, unknown>>();
+  if (!shipment) return null;
+
+  const booking = await db
+    .prepare(
+      `SELECT bd.id as booking_id, cq.carrier, cq.price
+       FROM booking_decisions bd
+       JOIN carrier_quotes cq ON cq.id = bd.chosen_quote_id
+       WHERE bd.shipment_id = ?
+       ORDER BY bd.booked_at DESC LIMIT 1`
+    )
+    .bind(shipmentId)
+    .first<{ booking_id: number; carrier: string; price: number }>();
+
+  const bestQuote = booking
+    ? null
+    : await db
+        .prepare("SELECT carrier, price FROM carrier_quotes WHERE shipment_id = ? AND is_best = 1")
+        .bind(shipmentId)
+        .first<{ carrier: string; price: number }>();
+
+  const quote = booking ?? bestQuote;
+  if (!quote) return null;
+
+  const text = [
+    `Shipment #${shipment.id} quote confirmation`,
+    `Material: ${shipment.material ?? "—"}`,
+    `Weight: ${shipment.weight_lbs ?? "—"} lbs`,
+    `Origin: ${shipment.origin_address ?? "—"}`,
+    `Destination: ${shipment.destination_address}`,
+    `Carrier: ${quote.carrier}`,
+    `Rate: $${Number(quote.price).toFixed(2)}`,
+    booking ? "Status: Booked" : "Status: Not yet booked (best available rate shown)",
+  ].join("\n");
+
+  return { text, bookingId: booking?.booking_id ?? null };
+}
+
+app.get("/api/shipments/:id/export", async (c) => {
+  const id = Number(c.req.param("id"));
+  const result = await buildExportText(c.env.DB, id);
+  if (!result) return c.json({ error: "No rate available to export yet" }, 400);
+
+  if (result.bookingId !== null) {
+    await c.env.DB.prepare("UPDATE booking_decisions SET exported = 1 WHERE id = ?")
+      .bind(result.bookingId)
+      .run();
+  }
+
+  c.header("Content-Disposition", `attachment; filename="shipment-${id}-quote.txt"`);
+  return c.text(result.text);
+});
+
+app.post("/api/shipments/export-all", async (c) => {
+  const { results: shipments } = await c.env.DB.prepare(
+    "SELECT id FROM shipments WHERE status IN ('rated', 'booked')"
+  ).all<{ id: number }>();
+
+  const exports: { shipmentId: number; text: string }[] = [];
+  for (const shipment of shipments) {
+    const result = await buildExportText(c.env.DB, shipment.id);
+    if (!result) continue;
+    if (result.bookingId !== null) {
+      await c.env.DB.prepare("UPDATE booking_decisions SET exported = 1 WHERE id = ?")
+        .bind(result.bookingId)
+        .run();
+    }
+    exports.push({ shipmentId: shipment.id, text: result.text });
+  }
+
+  return c.json({ exports });
 });
 
 app.get("/api/config/freight-classes", async (c) => {

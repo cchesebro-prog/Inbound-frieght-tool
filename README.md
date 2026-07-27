@@ -61,8 +61,14 @@ npx wrangler d1 execute inbound-freight-tool-db --remote --command \
   "INSERT INTO users (name, email, password_hash) VALUES ('Your Name', 'you@wigwam.com', '<hash from scripts/hash-password.mjs>')"
 ```
 
+## What's built
+
+- Login, shipment intake (paste or sample-email buttons), AI extraction with inline correction, batch rate shopping, per-shipment and batch-wide booking, and quote export (single shipment or all as one combined text file).
+
 ## What's not built yet
 
 - Live carrier rating APIs (Phase 2) — rates are estimated using the freight-class/zone logic in `src/rating.ts`.
 - Acumatica integration (Phase 3) — no PO matching or ERP write-back yet; the `shipments` table intentionally leaves room for the future PO columns.
-- Full UI polish — `public/index.html` is a functional but minimal shell (login, add shipment, rate all, list) to prove out the API end-to-end; the richer batch/results UI described in `PHASE1_BUILD_PLAN.md` section 5 is still to be built out.
+- Freight-class config page (FR-2.2) — the `/api/config/freight-classes` API exists but there's no UI for it yet; edit the table directly via `wrangler d1 execute` in the meantime.
+- Metrics/history dashboard (FR-5.1/5.3) — the `/api/metrics` API exists but isn't surfaced in the UI.
+- Visual polish — functional but plain; no design pass yet.

@@ -5,17 +5,42 @@
 <title>Inbound Freight Tool</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
   h1 { font-size: 1.25rem; }
   .destination-bar { background: #f0f4f2; border: 1px solid #d5ddd9; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1.5rem; }
-  textarea { width: 100%; min-height: 8rem; font-family: inherit; }
-  button { cursor: pointer; padding: 0.5rem 1rem; border-radius: 4px; border: 1px solid #1D9E75; background: #1D9E75; color: white; }
+  textarea { width: 100%; min-height: 8rem; font-family: inherit; box-sizing: border-box; }
+  button { cursor: pointer; padding: 0.5rem 1rem; border-radius: 4px; border: 1px solid #1D9E75; background: #1D9E75; color: white; font-size: 0.9rem; }
   button.secondary { background: white; color: #1D9E75; }
-  table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-  th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #e5e5e5; font-size: 0.9rem; }
-  .best { border-left: 3px solid #1D9E75; }
+  button.small { padding: 0.25rem 0.6rem; font-size: 0.8rem; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .sample-buttons { margin: 0.5rem 0 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .batch-actions { display: flex; gap: 0.5rem; margin: 1rem 0; flex-wrap: wrap; }
   #login-view, #app-view { display: none; }
-  input { padding: 0.4rem; margin-right: 0.5rem; }
+  input { padding: 0.4rem; box-sizing: border-box; }
+
+  .shipment-card { border: 1px solid #e0e0e0; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+  .card-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .card-header h3 { margin: 0; font-size: 1rem; }
+  .status-badge { font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .status-queued { background: #eee; color: #555; }
+  .status-rated { background: #dbeafe; color: #1e40af; }
+  .status-booked { background: #d1fae5; color: #065f46; }
+  .status-needs_review { background: #fee2e2; color: #991b1b; }
+
+  .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.5rem; margin: 0.75rem 0; }
+  .field-grid label { display: block; font-size: 0.75rem; color: #666; margin-bottom: 0.15rem; }
+  .field-grid .field-value { font-size: 0.9rem; }
+  .field-grid input { width: 100%; font-size: 0.9rem; }
+  .card-fields[data-mode="view"] .field-edit { display: none; }
+  .card-fields[data-mode="edit"] .field-value { display: none; }
+
+  .quotes-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+  .quotes-table th, .quotes-table td { text-align: left; padding: 0.3rem 0.5rem; font-size: 0.85rem; border-bottom: 1px solid #eee; }
+  .quotes-table tr.best { border-left: 3px solid #1D9E75; background: #f3fbf8; }
+  .best-label { color: #1D9E75; font-weight: 600; }
+
+  .card-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
+  a.btn-link { display: inline-block; padding: 0.25rem 0.6rem; font-size: 0.8rem; border: 1px solid #1D9E75; color: #1D9E75; border-radius: 4px; text-decoration: none; }
 </style>
 </head>
 <body>
@@ -36,21 +61,66 @@
   <div class="destination-bar">Delivering to: 5300 WI-42, Sheboygan, WI 53083</div>
 
   <textarea id="raw-input" placeholder="Paste a supplier email here..."></textarea>
-  <br /><br />
+  <div class="sample-buttons">
+    <button class="secondary small" data-sample="wool">Wool yarn</button>
+    <button class="secondary small" data-sample="synthetic">Synthetic yarn</button>
+    <button class="secondary small" data-sample="cotton">Cotton yarn</button>
+    <button class="secondary small" data-sample="blank">Blank</button>
+  </div>
   <button id="add-shipment-btn">Add shipment</button>
-  <button class="secondary" id="rate-all-btn">Rate all queued</button>
 
-  <table id="shipments-table">
-    <thead>
-      <tr><th>ID</th><th>Material</th><th>Weight (lbs)</th><th>Status</th><th>Best rate</th><th></th></tr>
-    </thead>
-    <tbody></tbody>
-  </table>
+  <div class="batch-actions">
+    <button class="secondary" id="rate-all-btn">Rate all queued</button>
+    <button class="secondary" id="book-all-btn">Book all best rates</button>
+    <button class="secondary" id="export-all-btn">Export all quotes</button>
+  </div>
+
+  <div id="shipments-container"></div>
 </div>
 
 <script>
   const loginView = document.getElementById('login-view');
   const appView = document.getElementById('app-view');
+  const shipmentsContainer = document.getElementById('shipments-container');
+
+  const SAMPLE_EMAILS = {
+    wool: `Hi team, please arrange pickup for our latest wool order:
+Material: Wool yarn cones (natural fiber)
+Total weight: 2,800 lbs
+Dimensions: 48" L x 40" W x 52" H
+Pallet count: 6
+Origin: 400 Textile Mill Rd, Gastonia, NC 28052
+Pickup available: Tomorrow 7am-2pm
+Hazmat: No
+Thanks, Appalachian Wool Supply Co.`,
+    synthetic: `Team, synthetic yarn shipment ready for pickup:
+- Product: Polyester filament yarn, cone-wound
+- Weight: 4,100 lbs
+- Packaging: 8 pallets, 48x40x60 inches each
+- Ship from: 1800 Fiber Park Dr, Spartanburg, SC 29301
+- Available: Monday after 6am
+Best, SynthFiber Industries`,
+    cotton: `Hello, cotton yarn shipment details:
+Item: Ring-spun cotton yarn, bagged in poly
+Weight: 3,600 lbs
+Packaging: 5 pallets, 48x40x56 each
+Pickup address: 220 Cotton Row, Greenville, MS 38701
+Ready date: Thursday morning
+Regards, Delta Cotton Yarn LLC`,
+    blank: '',
+  };
+
+  const EDITABLE_FIELDS = [
+    { key: 'material', label: 'Material', type: 'text' },
+    { key: 'freight_class', label: 'Freight class', type: 'number' },
+    { key: 'weight_lbs', label: 'Weight (lbs)', type: 'number' },
+    { key: 'pieces', label: 'Pieces', type: 'number' },
+    { key: 'length_in', label: 'Length (in)', type: 'number' },
+    { key: 'width_in', label: 'Width (in)', type: 'number' },
+    { key: 'height_in', label: 'Height (in)', type: 'number' },
+    { key: 'origin_address', label: 'Origin', type: 'text' },
+    { key: 'ready_date', label: 'Ready date', type: 'text' },
+  ];
 
   async function api(path, options = {}) {
     const res = await fetch(path, {
@@ -96,6 +166,12 @@
     showLogin();
   });
 
+  document.querySelectorAll('[data-sample]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.getElementById('raw-input').value = SAMPLE_EMAILS[btn.dataset.sample];
+    });
+  });
+
   document.getElementById('add-shipment-btn').addEventListener('click', async () => {
     const rawInput = document.getElementById('raw-input').value;
     if (!rawInput.trim()) return;
@@ -115,15 +191,118 @@
     loadShipments();
   });
 
+  document.getElementById('book-all-btn').addEventListener('click', async () => {
+    await api('/api/shipments/book-all', { method: 'POST', body: '{}' });
+    loadShipments();
+  });
+
+  document.getElementById('export-all-btn').addEventListener('click', async () => {
+    const { exports } = await api('/api/shipments/export-all', { method: 'POST', body: '{}' });
+    if (!exports || exports.length === 0) return;
+    const combined = exports.map((e) => e.text).join('\n\n---\n\n');
+    downloadTextFile('all-quotes.txt', combined);
+  });
+
+  function downloadTextFile(filename, text) {
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function fieldValue(shipment, field) {
+    const value = shipment[field.key];
+    if (value === null || value === undefined || value === '') return '—';
+    return value;
+  }
+
+  function renderCard(shipment) {
+    const fieldsHtml = EDITABLE_FIELDS.map((field) => `
+      <div>
+        <label>${field.label}</label>
+        <div class="field-value">${fieldValue(shipment, field)}</div>
+        <input class="field-edit" type="${field.type}" data-field="${field.key}"
+          value="${shipment[field.key] ?? ''}" />
+      </div>
+    `).join('');
+
+    const quotesHtml = shipment.quotes.length === 0 ? '' : `
+      <table class="quotes-table">
+        <thead><tr><th>Carrier</th><th>Price</th><th></th></tr></thead>
+        <tbody>
+          ${shipment.quotes.map((q) => `
+            <tr class="${q.is_best ? 'best' : ''}">
+              <td>${q.carrier}${q.is_best ? ' <span class="best-label">★ Best</span>' : ''}</td>
+              <td>$${Number(q.price).toFixed(2)}</td>
+              <td>
+                ${shipment.status !== 'booked'
+                  ? `<button class="small book-btn" data-shipment="${shipment.id}" data-quote="${q.id}">Book</button>`
+                  : ''}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+
+    const canExport = shipment.status === 'rated' || shipment.status === 'booked';
+
+    return `
+      <div class="shipment-card" data-id="${shipment.id}">
+        <div class="card-header">
+          <h3>#${shipment.id} — ${shipment.material ?? 'Unknown material'}</h3>
+          <span class="status-badge status-${shipment.status}">${shipment.status.replace('_', ' ')}</span>
+        </div>
+        <div class="card-fields" data-mode="view">
+          <div class="field-grid">${fieldsHtml}</div>
+        </div>
+        <div class="card-actions">
+          <button class="secondary small edit-toggle-btn" data-shipment="${shipment.id}">Edit</button>
+          <button class="secondary small save-btn" data-shipment="${shipment.id}" style="display:none;">Save</button>
+          ${canExport ? `<a class="btn-link" href="/api/shipments/${shipment.id}/export">Export</a>` : ''}
+        </div>
+        ${quotesHtml}
+      </div>
+    `;
+  }
+
+  shipmentsContainer.addEventListener('click', async (e) => {
+    const editBtn = e.target.closest('.edit-toggle-btn');
+    const saveBtn = e.target.closest('.save-btn');
+    const bookBtn = e.target.closest('.book-btn');
+
+    if (editBtn) {
+      const card = editBtn.closest('.shipment-card');
+      const fields = card.querySelector('.card-fields');
+      fields.dataset.mode = 'edit';
+      editBtn.style.display = 'none';
+      card.querySelector('.save-btn').style.display = 'inline-block';
+    } else if (saveBtn) {
+      const card = saveBtn.closest('.shipment-card');
+      const id = saveBtn.dataset.shipment;
+      const updates = {};
+      card.querySelectorAll('.field-edit').forEach((input) => {
+        const raw = input.value;
+        updates[input.dataset.field] = input.type === 'number' && raw !== '' ? Number(raw) : raw;
+      });
+      await api(`/api/shipments/${id}`, { method: 'PATCH', body: JSON.stringify(updates) });
+      loadShipments();
+    } else if (bookBtn) {
+      const { shipment: shipmentId, quote: quoteId } = bookBtn.dataset;
+      await api(`/api/shipments/${shipmentId}/book`, {
+        method: 'POST',
+        body: JSON.stringify({ chosenQuoteId: Number(quoteId) }),
+      });
+      loadShipments();
+    }
+  });
+
   async function loadShipments() {
     const shipments = await api('/api/shipments');
-    const tbody = document.querySelector('#shipments-table tbody');
-    tbody.innerHTML = '';
-    for (const s of shipments) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${s.id}</td><td>${s.material ?? '—'}</td><td>${s.weight_lbs ?? '—'}</td><td>${s.status}</td><td>—</td><td></td>`;
-      tbody.appendChild(tr);
-    }
+    shipmentsContainer.innerHTML = shipments.map(renderCard).join('');
   }
 
   // Assume logged out until an authenticated call proves otherwise.
