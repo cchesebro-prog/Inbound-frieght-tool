@@ -1,4 +1,5 @@
 import type { Bindings } from "./types";
+import { normalizePoNumber } from "./acumatica";
 
 export type ExtractedShipment = {
   material: string | null;
@@ -11,12 +12,15 @@ export type ExtractedShipment = {
   hazmat: boolean | null;
   originAddress: string | null;
   readyDate: string | null;
+  poNumber: string | null;
 };
 
 const EXTRACTION_PROMPT = `Extract shipment details from the supplier email below. Return raw JSON only, no markdown, matching this exact shape:
-{"material": string|null, "freightClass": number|null, "weightLbs": number|null, "pieces": number|null, "lengthIn": number|null, "widthIn": number|null, "heightIn": number|null, "hazmat": boolean|null, "originAddress": string|null, "readyDate": string|null}
+{"material": string|null, "freightClass": number|null, "weightLbs": number|null, "pieces": number|null, "lengthIn": number|null, "widthIn": number|null, "heightIn": number|null, "hazmat": boolean|null, "originAddress": string|null, "readyDate": string|null, "poNumber": string|null}
 
 Freight class defaults if not stated: wool yarn = 60, polyester/synthetic yarn = 60, cotton yarn = 55.
+
+poNumber is any purchase order number the vendor references (e.g. "PO P000513", "PO# 513", "order P000513") — extract it as written, don't reformat it. Null if none is mentioned.
 
 Email:
 `;
@@ -78,5 +82,6 @@ function extractWithRegex(rawInput: string): ExtractedShipment {
     hazmat: hazmatMatch ? hazmatMatch[1].toLowerCase() === "yes" : null,
     originAddress: originMatch ? originMatch[1] : null,
     readyDate: null,
+    poNumber: normalizePoNumber(rawInput),
   };
 }
