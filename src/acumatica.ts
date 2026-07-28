@@ -137,24 +137,28 @@ async function lookupVendorName(env: Bindings, token: string, vendorId: string):
   return body.VendorName?.value ?? "";
 }
 
-// Acumatica's contract API only supports lookup by exact OrderNbr for
-// PurchaseOrder (broad filtering is unreliable/unsupported) — matches the
-// PO-number-driven design in FR-6.1, so this is not a limitation here.
+// PurchaseOrder's real primary key is Type + OrderNbr (Type e.g. "Normal",
+// "Drop-Ship", "Blanket" — confirmed against Wigwam's live data 2026-07-28,
+// P000513 has Type "Normal"). We only ever have OrderNbr (typed/extracted
+// from a supplier email, never the type), so a direct by-key GET
+// (/PurchaseOrder/{orderNbr}) throws a FillEntityImplWithKeys
+// InvalidOperationException — the endpoint expects two key segments, not
+// one. Querying the collection with $filter on OrderNbr alone works instead
+// (confirmed live against P000513) and doesn't require knowing Type.
 export async function lookupPurchaseOrder(
   env: Bindings,
   orderNbr: string
 ): Promise<MatchedPurchaseOrder | null> {
   const token = await getAccessToken(env);
-  const url = `${env.ACUMATICA_BASE_URL}/entity/Default/${env.ACUMATICA_ENDPOINT_VERSION}/PurchaseOrder/${encodeURIComponent(
-    orderNbr
-  )}?$expand=Details`;
+  const url = `${env.ACUMATICA_BASE_URL}/entity/Default/${env.ACUMATICA_ENDPOINT_VERSION}/PurchaseOrder?$filter=${encodeURIComponent(
+    `OrderNbr eq '${orderNbr}'`
+  )}&$expand=Details`;
 
   const response = await fetch(url, {
     headers: { authorization: `Bearer ${token}`, accept: "application/json" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
 
-  if (response.status === 404) return null;
   if (!response.ok) {
     // Acumatica's contract-based API returns a JSON body (often with a
     // "message"/"exceptionMessage") describing the actual server-side
@@ -164,7 +168,12 @@ export async function lookupPurchaseOrder(
     throw new Error(`Acumatica PO lookup failed: ${response.status}${detail ? ` — ${detail.slice(0, 500)}` : ""}`);
   }
 
-  const body = (await response.json()) as AcumaticaPoResponse;
+  // $filter on the collection endpoint returns a JSON array, not a single
+  // object — zero matches is a 200 with an empty array, not a 404.
+  const results = (await response.json()) as AcumaticaPoResponse[];
+  const body = results[0];
+  if (!body) return null;
+
   const vendorId = body.VendorID?.value ?? "";
   const vendorName = await lookupVendorName(env, token, vendorId);
 
