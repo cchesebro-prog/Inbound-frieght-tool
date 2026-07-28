@@ -102,6 +102,8 @@ Phase 1 launches as a **parallel run**: the shipping manager keeps doing the cur
 - FR-4.2: User can export a quote/confirmation per shipment.
 - FR-4.3: Batch actions: book all best rates, export all quotes.
 - FR-4.4: Phase 2+: "book" should call the carrier's booking API where available rather than only recording a decision.
+- FR-4.5: After booking a rate, the shipping manager confirms the shipment with the freight carrier and records the carrier's confirmation/PRO number in the tool. Since no live carrier booking API exists yet (FR-3.3/FR-4.4 remain Phase 2), this confirmation happens outside the tool (phone/email) and is recorded manually — not called via API.
+- FR-4.6: The tool generates a Bill of Lading for the shipping manager to send to the vendor ahead of pickup, populated from the shipment, booked quote, and (once entered) carrier confirmation number. Available as soon as a shipment is booked; the confirmation number prints as "Pending confirmation" until FR-4.5 is completed, so the manager can prepare it without waiting on the carrier callback.
 
 ### 6.5 Reporting
 - FR-5.1: Tool shows daily/batch metrics: shipments processed, total cost at chosen rates, savings vs. highest quoted rate.
@@ -135,6 +137,7 @@ Core shipment record (minimum fields to be retained per shipment, across phases)
 - Vendor-referenced PO number as extracted (raw), and the normalized/matched Acumatica PO number + line, if found (Phase 3+)
 - PO reconciliation status: matched, unlinked/needs reconciliation, or not applicable (Phase 3+)
 - Booking/decision timestamp and user
+- Carrier confirmation/PRO number and confirmation timestamp/user, once the manual carrier-confirmation step is completed (FR-4.5)
 - Actual outcome once the manual process completes: actual carrier, actual charge, actual mode (LTL/Truckload), actual transit days (FR-5.3a)
 - Charge-variance threshold (shipping-manager-configurable, FR-5.3b) and, per matched PO line, aggregated material cost + freight-to-date + landed cost once complete (FR-6.6)
 
@@ -188,6 +191,7 @@ Resolved during requirements review (2026-07-24):
 - **Metrics/history dashboard scope (2026-07-27):** FR-5.1 (stat metrics) and FR-5.2 (history retention/view) are built as a "Metrics" panel in the UI. FR-5.3 was initially deferred (no capture mechanism existed) — see the follow-up decision below for how it was resolved.
 - **FR-5.3 design, resolved (2026-07-27):** The manual process being replaced was: get and compare carrier rates/service times, decide LTL vs. Truckload (a simple, calculable threshold — the exact number is still open, see section 12), book the load, create and send pickup documentation to the vendor, and check the actual invoiced charge against the quote within a reasonable tolerance before treating it as settled. This maps onto: (a) actual-outcome fields (carrier, charge, mode, transit days) entered inline on each shipment once the manual process completes (FR-5.3a) — reusing the existing field-edit UI rather than a separate reconciliation screen or requiring a separate view; (b) a charge-variance flag against the booked/best quote, with the tolerance a shipping-manager-configurable value rather than a hardcoded percentage or dollar amount (FR-5.3b) — because "reasonable" was explicitly called out as something the manager, not the system, should set.
 - **Landed cost, added scope (2026-07-27):** Not part of the original manual process, but explicitly wanted now that PO/line matching (FR-6.1) already exists: tie each shipment's actual freight charge to its matched PO/line and compute landed cost = PO line material cost + freight. Because PO lines are commonly fulfilled across multiple partial shipments (FR-6.1c), landed cost is aggregated **per PO line** once every shipment against it has both arrived and been charge-reconciled, not computed per-shipment or shown as a running partial figure (FR-6.6).
+- **Carrier confirmation + Bill of Lading, added scope (2026-07-28):** Requested as the next step after quote selection: confirm the booked quote with the freight carrier, and produce a Bill of Lading to send to the vendor for pickup. Since no live carrier booking API exists yet, confirmation stays a manual step (phone/email), with the tool just recording the confirmation/PRO number the carrier provides (FR-4.5) — the same "record the manual outcome" pattern as FR-5.3a, not a new integration. The BOL itself (FR-4.6) is a real, generated document (not just an extension of the existing plain-text quote export), available as soon as a shipment is booked so the manager isn't blocked on the carrier's callback to start the paperwork.
 
 ## 12. Remaining Open Items
 
