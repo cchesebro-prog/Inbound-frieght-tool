@@ -95,10 +95,11 @@ This clears all locks (or pass `{"lockName": "batch_operations"}` as the body to
 - PO-number-driven Acumatica matching (FR-6.1): extract/enter a PO number, look it up, manually confirm the matching PO line (pulls the real Acumatica item description into `material`), or flag as unmatched for Shipping/Purchasing reconciliation — pending the Acumatica secrets above.
 - Freight-class config page (FR-2.2): a "Freight classes" panel (toggle button next to the batch actions) to view, edit, and add material/freight-class defaults, backed by `/api/config/freight-classes`.
 - A D1-backed serialization lock for the batch endpoints (rate-batch/book-all/export-all), with a token-gated reset endpoint (see "Clearing a stuck batch-operations lock" above) so a stuck lock never requires a redeploy. Every outbound `fetch()` (Anthropic, Acumatica) now has an explicit timeout so a slow/unresponsive external service can't hang a request indefinitely.
+- Metrics/history dashboard (FR-5.1/5.2): a "Metrics" panel (toggle button next to Freight classes) with stat tiles (shipments processed, total booked cost, savings vs. highest quote) and a compact history table (id/material/status/carrier/rate/added) across all loaded shipments.
 
 ## What's not built yet
 
 - Live carrier rating APIs (Phase 2) — rates are estimated using the freight-class/zone logic in `src/rating.ts`. Estes Express's Cloud API has been reviewed ahead of getting real access (rate-quotes, BOL/booking, pickup requests, tracking), but no integration code exists yet — see `PHASE1_BUILD_PLAN.md` section 8 open items.
 - Acumatica write-back (still Phase 3, per FR-6.2) — this build only reads PO/vendor/item data for matching; it never writes to Acumatica.
-- Metrics/history dashboard (FR-5.1/5.3) — the `/api/metrics` API exists but isn't surfaced in the UI.
+- Parallel-run comparison view (FR-5.3): tool-estimated rates/extraction vs. the manual process's actual outcomes. Blocked on there being no field anywhere to capture what the manual process actually did/cost — that capture mechanism needs to be designed before this can be built, not assumed.
 - Visual polish — functional but plain; no design pass yet.

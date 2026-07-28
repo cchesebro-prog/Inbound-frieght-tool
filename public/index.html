@@ -36,6 +36,11 @@
   .po-match-panel table { width: 100%; border-collapse: collapse; margin-top: 0.4rem; }
   .po-match-panel th, .po-match-panel td { text-align: left; padding: 0.2rem 0.4rem; font-size: 0.8rem; }
 
+  .stat-tiles { display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 0.75rem 0 1rem; }
+  .stat-tile { background: #f0f4f2; border: 1px solid #d5ddd9; border-radius: 6px; padding: 0.6rem 1rem; min-width: 140px; }
+  .stat-tile .stat-label { font-size: 0.75rem; color: #666; }
+  .stat-tile .stat-value { font-size: 1.25rem; font-weight: 600; }
+
   .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.5rem; margin: 0.75rem 0; }
   .field-grid label { display: block; font-size: 0.75rem; color: #666; margin-bottom: 0.15rem; }
   .field-grid .field-value { font-size: 0.9rem; }
@@ -83,6 +88,7 @@
     <button class="secondary" id="book-all-btn">Book all best rates</button>
     <button class="secondary" id="export-all-btn">Export all quotes</button>
     <button class="secondary" id="toggle-freight-classes-btn" style="margin-left:auto;">Freight classes</button>
+    <button class="secondary" id="toggle-metrics-btn">Metrics</button>
   </div>
 
   <div id="freight-classes-panel" style="display:none;">
@@ -96,6 +102,15 @@
       <input type="number" id="new-freight-class-input" placeholder="Freight class" style="width:120px;" />
       <button class="small" id="add-freight-class-btn">Add / update</button>
     </div>
+  </div>
+
+  <div id="metrics-panel" style="display:none;">
+    <h2 style="font-size:1rem;">Metrics</h2>
+    <div class="stat-tiles" id="metrics-tiles"></div>
+    <table class="quotes-table">
+      <thead><tr><th>ID</th><th>Material</th><th>Status</th><th>Carrier</th><th>Rate</th><th>Added</th></tr></thead>
+      <tbody id="history-body"></tbody>
+    </table>
   </div>
 
   <div id="shipments-container"></div>
@@ -285,6 +300,48 @@ Regards, Delta Cotton Yarn LLC`,
     loadFreightClasses();
   });
 
+  let lastShipments = [];
+
+  function renderHistoryRow(shipment) {
+    const quote = shipment.bookedQuote || (shipment.quotes || []).find((q) => q.is_best);
+    return `
+      <tr>
+        <td>${shipment.id}</td>
+        <td>${shipment.material ?? '—'}</td>
+        <td>${shipment.status.replace('_', ' ')}</td>
+        <td>${quote ? quote.carrier : '—'}</td>
+        <td>${quote ? '$' + Number(quote.price).toFixed(2) : '—'}</td>
+        <td>${shipment.created_at ?? '—'}</td>
+      </tr>
+    `;
+  }
+
+  async function loadMetrics() {
+    const metrics = await api('/api/metrics');
+    document.getElementById('metrics-tiles').innerHTML = `
+      <div class="stat-tile">
+        <div class="stat-label">Shipments processed</div>
+        <div class="stat-value">${metrics.processed}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Total booked cost</div>
+        <div class="stat-value">$${Number(metrics.totalBookedCost).toFixed(2)}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Savings vs. highest quote</div>
+        <div class="stat-value">$${Number(metrics.totalSavingsVsHighestQuote).toFixed(2)}</div>
+      </div>
+    `;
+    document.getElementById('history-body').innerHTML = lastShipments.map(renderHistoryRow).join('');
+  }
+
+  document.getElementById('toggle-metrics-btn').addEventListener('click', () => {
+    const panel = document.getElementById('metrics-panel');
+    const opening = panel.style.display === 'none';
+    panel.style.display = opening ? 'block' : 'none';
+    if (opening) loadMetrics();
+  });
+
   function downloadTextFile(filename, text) {
     const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -437,6 +494,7 @@ Regards, Delta Cotton Yarn LLC`,
 
   async function loadShipments() {
     const shipments = await api('/api/shipments');
+    lastShipments = shipments;
     shipmentsContainer.innerHTML = shipments.map(renderCard).join('');
   }
 

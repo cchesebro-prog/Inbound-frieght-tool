@@ -179,10 +179,13 @@ Resolved during requirements review (2026-07-24):
 - **Acumatica findings grounding FR-6.1 (sample PO `P000513` pulled during design):** PO numbers follow a `P` + 6-digit zero-padded format; `VendorClass = "YARN"` distinguishes raw-material yarn vendors from other vendor types (e.g. `MACHPART`); real inventory items use specific construction/blend/color codes (e.g. `Y5750-057`), not the Wool/Synthetic/Cotton buckets in the Phase 0 proof of concept — confirming material should be sourced from the matched PO line once confirmed (FR-6.1b), not the AI's guess from email text; freight class (NMFC) is not tracked in Acumatica at all, reconfirming FR-2.2.
 - **Acumatica API credentials for FR-6.1:** An existing Acumatica API integration credential/pattern is available and can be obtained from IT (confirmed by the business owner); exact connection details (endpoint version, OAuth client) still need to be provisioned for this Worker specifically — tracked as a setup blocker in `PHASE1_BUILD_PLAN.md` / `README.md`, same pattern as the `ANTHROPIC_API_KEY` blocker.
 - **Stuck-lock recovery and outbound timeouts (2026-07-27):** the batch endpoints (rate-batch/book-all/export-all) share a serialization lock (see `PHASE1_BUILD_PLAN.md` section 3) with no escape hatch other than redeploying if a request dies mid-operation and never releases it. Added a token-gated reset endpoint as the escape hatch, and added an explicit timeout to every outbound `fetch()` call (Anthropic, Acumatica) so a slow/unresponsive external service can't hang a request — see the Operability/Reliability NFRs added to section 9.
+- **Metrics/history dashboard scope (2026-07-27):** FR-5.1 (stat metrics) and FR-5.2 (history retention/view) are built as a "Metrics" panel in the UI. FR-5.3 (parallel-run comparison vs. manual-process actuals) is **not** built: no field anywhere captures what the manual process actually did or cost, so there is nothing to compare the tool's estimates against yet. Designing that capture mechanism (who records it, when, what fields) is a prerequisite and has not been scoped — flagged as an open item (section 12) rather than guessed at.
 
 ## 12. Remaining Open Items
 
-None outstanding from this round of review. Expect new open items to surface once Phase 1 build starts and, later, during Phase 3 design (e.g. the PO-number normalization catalogue above).
+- **FR-5.3 data capture:** How and where the manual process's actual outcome (carrier used, cost paid, whether it matched the tool's extraction/estimate) gets recorded, so the parallel-run comparison view has something to compare against. Not yet designed.
+
+Expect further open items to surface once Phase 1 build starts and, later, during Phase 3 design (e.g. the PO-number normalization catalogue above).
 
 ## 13. Assumptions
 

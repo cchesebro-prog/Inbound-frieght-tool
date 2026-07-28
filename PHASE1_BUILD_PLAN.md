@@ -129,7 +129,7 @@ Serializes `rate-batch`/`book-all`/`export-all` (see `src/locks.ts`) since all t
 | `/api/shipments/:id/export` | GET | Export quote/confirmation (FR-4.2) |
 | `/api/shipments/book-all` / `/export-all` | POST | Batch actions (FR-4.3) |
 | `/api/config/freight-classes` | GET/PUT | View/edit freight-class default table (FR-2.2) |
-| `/api/metrics` | GET | Daily/batch metrics, parallel-run comparison data (FR-5.1, FR-5.3) |
+| `/api/metrics` | GET | Processed count, total booked cost, savings vs. highest quote (FR-5.1) — no parallel-run comparison data yet (FR-5.3, see milestone 5) |
 | `/api/shipments/:id/po-lookup` | POST | Look up a (typed or extracted) PO number against Acumatica; stores a pending match for review (FR-6.1, FR-6.1a) |
 | `/api/shipments/:id/po-confirm` | POST | Shipping manager confirms a specific matched PO line; pulls that line's material into the shipment (FR-6.1b) |
 | `/api/shipments/:id/po-flag-unmatched` | POST | Proceed unlinked, flag for Shipping/Purchasing reconciliation (FR-6.1d) |
@@ -151,7 +151,7 @@ Serializes `rate-batch`/`book-all`/`export-all` (see `src/locks.ts`) since all t
 2. ✅ **Intake & extraction** — paste/upload → server-side Claude API extraction (Haiku 4.5) → regex fallback → correction UI (FR-1.x). Correction UI is inline edit/save on each shipment card.
 3. ✅ **Freight class config + rate engine** — rate engine (zone map, freight-class multiplier, dimensional weight) is done and running (FR-3.x). Config page UI for FR-2.2 is built: a "Freight classes" panel (toggle button in the batch-actions bar) listing the table with inline edit + an add/update row, backed by the existing `/api/config/freight-classes` API.
 4. ✅ **Booking, export, batch actions** — book/export per shipment and batch-wide (FR-4.x): quote table with best-rate highlight, per-shipment Book/Export, batch Book all/Export all (combined text download).
-5. **Reporting** — `/api/metrics` exists; metrics bar, history view, and parallel-run comparison UI (FR-5.x) not built yet.
+5. ⏳ **Reporting** — a "Metrics" panel (toggle button next to Freight classes) is built: stat tiles (shipments processed, total booked cost, savings vs. highest quote per FR-5.1) plus a compact history table (id/material/status/carrier/rate/added) sourced from the same shipment list already loaded for the queue (FR-5.2). The parallel-run comparison view in FR-5.3 (tool estimate vs. manual-process actual) is **not** built — there's no field anywhere in the schema capturing what the manual process actually did/cost, so there's nothing to compare against yet. Capturing that is a prerequisite, not something to guess at.
 6. **Multi-user rollout** — add remaining users' accounts, confirm auth approach with IT, begin the Phase 1 parallel run.
 7. ⏳ **PO matching (pulled forward from Phase 3, FR-6.1)** — code complete (`src/acumatica.ts`, PO-related routes, UI lookup/confirm/flag panel), blocked on IT provisioning the four `ACUMATICA_*` secrets (see `README.md`). Acumatica write-back (FR-6.2) remains out of scope until Phase 3.
 8. ✅ **Operational hardening** — batch-operations lock (`src/locks.ts`, migration `0004_locks.sql`) serializing rate-batch/book-all/export-all, with a token-gated `/api/admin/reset-lock` escape hatch; explicit timeouts added to every outbound `fetch()` (Anthropic in `src/extraction.ts`, Acumatica in `src/acumatica.ts`). Satisfies the Operability/Reliability NFRs added to REQUIREMENTS.md section 9.
@@ -175,6 +175,7 @@ Serializes `rate-batch`/`book-all`/`export-all` (see `src/locks.ts`) since all t
 - `ANTHROPIC_API_KEY` and `SESSION_SECRET` set as Worker secrets — extraction (FR-1.1/1.2) runs against Claude Haiku 4.5.
 - Deployed and live at `https://inbound-freight-tool.cchesebro.workers.dev`. First user created; login confirmed working.
 - End-to-end loop confirmed working: intake → AI extraction → inline correction → batch rate shopping → per-shipment/batch booking → single/combined quote export.
-- Freight-class config page UI (FR-2.2) is now built (see milestone 3). Not yet built: metrics/history dashboard UI (FR-5.x) — the `/api/metrics` API exists but isn't surfaced in the UI.
+- Freight-class config page UI (FR-2.2) is now built (see milestone 3).
+- Metrics/history dashboard UI (FR-5.1/5.2) is now built (see milestone 5): stat tiles + compact history table, behind a "Metrics" toggle. FR-5.3 (parallel-run comparison vs. manual-process actuals) remains unbuilt — no data source for "actual" outcomes exists yet.
 - PO matching (FR-6.1) pulled forward from Phase 3: migration `0003_po_matching.sql` and PO-lookup/confirm/flag routes + UI are built (see milestone 7). Blocked on IT provisioning `ACUMATICA_BASE_URL`, `ACUMATICA_ENDPOINT_VERSION`, `ACUMATICA_CLIENT_ID`, `ACUMATICA_CLIENT_SECRET` as Worker secrets — flagged as a setup blocker, same pattern as `ANTHROPIC_API_KEY`.
 - Operational hardening (see milestone 8) is live: migration `0004_locks.sql`, `src/locks.ts`, `/api/admin/reset-lock`, and outbound-fetch timeouts. Requires `ADMIN_RESET_TOKEN` as a new Worker secret (see `README.md` "Clearing a stuck batch-operations lock") before the reset endpoint can be used — flagged as a setup item, though its absence only blocks the reset endpoint, not normal app operation.

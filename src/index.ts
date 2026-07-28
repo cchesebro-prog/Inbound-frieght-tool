@@ -123,9 +123,30 @@ app.get("/api/shipments", async (c) => {
     quotesByShipment.set(shipmentId, list);
   }
 
+  // FR-5.2 history view: the actually-booked carrier/rate, not just the best
+  // quote — a shipment can be booked at a non-best rate via the per-quote
+  // Book button, so these can differ.
+  const { results: bookings } = await c.env.DB.prepare(
+    `SELECT bd.shipment_id as shipment_id, cq.carrier as carrier, cq.price as price
+     FROM booking_decisions bd
+     JOIN carrier_quotes cq ON cq.id = bd.chosen_quote_id
+     WHERE bd.shipment_id IN (${placeholders})
+     ORDER BY bd.booked_at ASC`
+  )
+    .bind(...ids)
+    .all<{ shipment_id: number; carrier: string; price: number }>();
+
+  const bookedQuoteByShipment = new Map<number, { carrier: string; price: number }>();
+  for (const booking of bookings) {
+    // Ascending order + Map overwrite: the most recently booked decision wins
+    // if a shipment was ever rebooked.
+    bookedQuoteByShipment.set(booking.shipment_id, { carrier: booking.carrier, price: booking.price });
+  }
+
   const enriched = shipments.map((s) => ({
     ...s,
     quotes: quotesByShipment.get(s.id as number) ?? [],
+    bookedQuote: bookedQuoteByShipment.get(s.id as number) ?? null,
   }));
   return c.json(enriched);
 });
@@ -452,9 +473,21 @@ app.get("/api/metrics", async (c) => {
      JOIN carrier_quotes cq ON cq.id = bd.chosen_quote_id`
   ).first<{ total: number | null }>();
 
+  // FR-5.1: savings vs. the highest quote presented for each booked shipment
+  // (not vs. some other carrier's rate) — the counterfactual is "what if the
+  // most expensive option had been booked instead."
+  const savings = await c.env.DB.prepare(
+    `SELECT SUM(
+       (SELECT MAX(price) FROM carrier_quotes WHERE shipment_id = bd.shipment_id) - cq.price
+     ) as total
+     FROM booking_decisions bd
+     JOIN carrier_quotes cq ON cq.id = bd.chosen_quote_id`
+  ).first<{ total: number | null }>();
+
   return c.json({
     processed: processed?.count ?? 0,
     totalBookedCost: bookedCost?.total ?? 0,
+    totalSavingsVsHighestQuote: savings?.total ?? 0,
   });
 });
 
