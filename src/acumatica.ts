@@ -50,7 +50,6 @@ type AcumaticaPoResponse = {
   Date?: AcumaticaField<string>;
   PromisedOn?: AcumaticaField<string>;
   VendorID?: AcumaticaField<string>;
-  VendorRef?: AcumaticaField<string>;
   Details?: {
     LineNbr?: AcumaticaField<number>;
     InventoryID?: AcumaticaField<string>;
@@ -62,14 +61,23 @@ type AcumaticaPoResponse = {
   }[];
 };
 
+// The PurchaseOrder entity's "VendorRef" field is a free-text vendor
+// reference number (confirmed blank on the real P000513 PO) — NOT the
+// vendor's name. The name only lives on the Vendor entity itself, so a
+// second lookup is required.
+type AcumaticaVendorResponse = {
+  VendorName?: AcumaticaField<string>;
+};
+
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
-// Requires ACUMATICA_BASE_URL / ACUMATICA_ENDPOINT_VERSION / ACUMATICA_CLIENT_ID /
-// ACUMATICA_CLIENT_SECRET as Worker secrets. These are NOT set yet — see
-// README.md "Acumatica setup" section. IT needs to register an OAuth 2.0
-// client-credentials client against the Wigwam Acumatica instance (2025R2)
-// and confirm the published contract-based endpoint version before this can
-// be wired up; nothing here should be assumed to already be live.
+// Requires ACUMATICA_BASE_URL / ACUMATICA_CLIENT_ID / ACUMATICA_CLIENT_SECRET
+// as Worker secrets, and ACUMATICA_ENDPOINT_VERSION (a plain, non-secret var
+// in wrangler.toml — confirmed live against Wigwam's instance as
+// "25.200.001"). Secrets are NOT set yet — see README.md "Acumatica setup"
+// section. IT still needs to register an OAuth 2.0 client-credentials
+// client against the Wigwam Acumatica instance (2025R2); nothing here
+// should be assumed to already be live until that's done.
 async function getAccessToken(env: Bindings): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now()) {
     return cachedToken.value;
@@ -99,6 +107,22 @@ async function getAccessToken(env: Bindings): Promise<string> {
   return cachedToken.value;
 }
 
+async function lookupVendorName(env: Bindings, token: string, vendorId: string): Promise<string> {
+  if (!vendorId) return "";
+  const url = `${env.ACUMATICA_BASE_URL}/entity/Default/${env.ACUMATICA_ENDPOINT_VERSION}/Vendor/${encodeURIComponent(
+    vendorId
+  )}`;
+
+  const response = await fetch(url, {
+    headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+
+  if (!response.ok) return "";
+  const body = (await response.json()) as AcumaticaVendorResponse;
+  return body.VendorName?.value ?? "";
+}
+
 // Acumatica's contract API only supports lookup by exact OrderNbr for
 // PurchaseOrder (broad filtering is unreliable/unsupported) — matches the
 // PO-number-driven design in FR-6.1, so this is not a limitation here.
@@ -122,10 +146,13 @@ export async function lookupPurchaseOrder(
   }
 
   const body = (await response.json()) as AcumaticaPoResponse;
+  const vendorId = body.VendorID?.value ?? "";
+  const vendorName = await lookupVendorName(env, token, vendorId);
+
   return {
     orderNbr: body.OrderNbr?.value ?? orderNbr,
-    vendorId: body.VendorID?.value ?? "",
-    vendorName: body.VendorRef?.value ?? "",
+    vendorId,
+    vendorName,
     status: body.Status?.value ?? "",
     date: body.Date?.value ?? null,
     promisedOn: body.PromisedOn?.value ?? null,

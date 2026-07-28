@@ -63,18 +63,21 @@ npx wrangler d1 execute inbound-freight-tool-db --remote --command \
 
 ## Acumatica setup (FR-6.1 PO matching)
 
-PO matching was pulled forward from Phase 3 into active Phase 1 work. The Worker calls Acumatica directly (OAuth 2.0 client-credentials grant against the standard Acumatica contract-based REST API), which needs four secrets **not yet set**:
+PO matching was pulled forward from Phase 3 into active Phase 1 work. The Worker calls Acumatica directly (OAuth 2.0 client-credentials grant against the standard Acumatica contract-based REST API).
+
+The contract-based endpoint version is **confirmed** — `25.200.001`, verified live against Wigwam's Acumatica 2025R2 instance — and is already set as a plain (non-secret) var in `wrangler.toml`, so it does not need to be provisioned. What's still **not yet set** are the three OAuth/connection secrets:
 
 ```bash
 npx wrangler secret put ACUMATICA_BASE_URL        # e.g. https://acm.wigwam.com (site root, no path)
-npx wrangler secret put ACUMATICA_ENDPOINT_VERSION # the contract-based endpoint version published for this instance, e.g. 24.200.001
 npx wrangler secret put ACUMATICA_CLIENT_ID
 npx wrangler secret put ACUMATICA_CLIENT_SECRET
 ```
 
-**Setup blocker:** IT needs to register (or confirm) an OAuth 2.0 client-credentials client against the Wigwam Acumatica 2025R2 instance for this Worker, and confirm which contract-based endpoint version is published — this repo does not assume either already exists. Until these are set, `/api/shipments/:id/po-lookup` will fail with a 502 (`Acumatica auth failed`); everything else in the app works without them.
+**Setup blocker:** IT needs to register (or confirm) an OAuth 2.0 client-credentials client against the Wigwam Acumatica 2025R2 instance for this Worker, and provide the site's base URL. Until these three secrets are set, `/api/shipments/:id/po-lookup` will fail with a 502 (`Acumatica auth failed`); everything else in the app works without them.
 
 Until this is wired up, `po_number_raw` can still be captured (typed or AI-extracted from the email) and corrected like any other field — only the live lookup/match step depends on these secrets.
+
+Vendor name is resolved with a second call to the `Vendor` entity (by `VendorID`) rather than read off the PO itself — the PurchaseOrder entity's `VendorRef` field is a free-text vendor reference number (often blank), not the vendor's name.
 
 ## Clearing a stuck batch-operations lock
 

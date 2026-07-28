@@ -7,9 +7,12 @@ export type Bindings = {
   // "Acumatica setup". Calls in src/acumatica.ts fail clearly until these
   // are set, rather than being silently skipped.
   ACUMATICA_BASE_URL: string;
-  ACUMATICA_ENDPOINT_VERSION: string;
   ACUMATICA_CLIENT_ID: string;
   ACUMATICA_CLIENT_SECRET: string;
+  // Not secret — the published contract-based endpoint version, confirmed
+  // live against Wigwam's instance ("25.200.001"). Set as a plain [vars]
+  // entry in wrangler.toml, not a wrangler secret.
+  ACUMATICA_ENDPOINT_VERSION: string;
   // Escape hatch for a stuck batch-operations lock (see src/locks.ts) —
   // required by the x-admin-token header on POST /api/admin/reset-lock.
   ADMIN_RESET_TOKEN: string;
