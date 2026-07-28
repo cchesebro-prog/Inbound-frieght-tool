@@ -3,12 +3,17 @@ export type Bindings = {
   ASSETS: Fetcher;
   ANTHROPIC_API_KEY: string;
   SESSION_SECRET: string;
-  // Acumatica (FR-6.1 PO matching) — not yet provisioned, see README.md
-  // "Acumatica setup". Calls in src/acumatica.ts fail clearly until these
-  // are set, rather than being silently skipped.
+  // Acumatica (FR-6.1 PO matching) — see README.md "Acumatica setup". Calls
+  // in src/acumatica.ts fail clearly until these are set, rather than being
+  // silently skipped. Resource Owner Password Credentials grant (not Client
+  // Credentials — not an available option on Wigwam's instance, confirmed
+  // 2026-07-28); ACUMATICA_USERNAME/PASSWORD should be a dedicated
+  // service-account user, not a personal login.
   ACUMATICA_BASE_URL: string;
   ACUMATICA_CLIENT_ID: string;
   ACUMATICA_CLIENT_SECRET: string;
+  ACUMATICA_USERNAME: string;
+  ACUMATICA_PASSWORD: string;
   // Not secret — the published contract-based endpoint version, confirmed
   // live against Wigwam's instance ("25.200.001"). Set as a plain [vars]
   // entry in wrangler.toml, not a wrangler secret.

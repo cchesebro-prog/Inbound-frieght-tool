@@ -63,19 +63,21 @@ npx wrangler d1 execute inbound-freight-tool-db --remote --command \
 
 ## Acumatica setup (FR-6.1 PO matching)
 
-PO matching was pulled forward from Phase 3 into active Phase 1 work. The Worker calls Acumatica directly (OAuth 2.0 client-credentials grant against the standard Acumatica contract-based REST API).
+PO matching was pulled forward from Phase 3 into active Phase 1 work. The Worker calls Acumatica directly via OAuth 2.0 — **Resource Owner Password Credentials** grant (`grant_type=password`), not Client Credentials. Confirmed 2026-07-28 against Wigwam's live instance: Client Credentials isn't even an available Flow option on a Connected Application there — every Acumatica API call is tied to a specific user's role/permissions, so there's no pure app-only grant.
 
-The contract-based endpoint version is **confirmed** — `25.200.001`, verified live against Wigwam's Acumatica 2025R2 instance — and is already set as a plain (non-secret) var in `wrangler.toml`, so it does not need to be provisioned. What's still **not yet set** are the three OAuth/connection secrets:
+The contract-based endpoint version is **confirmed** — `25.200.001`, verified live against Wigwam's Acumatica 2025R2 instance — and is already set as a plain (non-secret) var in `wrangler.toml`, so it does not need to be provisioned. What's still needed are five secrets:
 
 ```bash
 npx wrangler secret put ACUMATICA_BASE_URL        # e.g. https://acm.wigwam.com (site root, no path)
-npx wrangler secret put ACUMATICA_CLIENT_ID
-npx wrangler secret put ACUMATICA_CLIENT_SECRET
+npx wrangler secret put ACUMATICA_CLIENT_ID       # Connected Application Client ID
+npx wrangler secret put ACUMATICA_CLIENT_SECRET   # Connected Application shared secret
+npx wrangler secret put ACUMATICA_USERNAME        # dedicated Acumatica service-account username
+npx wrangler secret put ACUMATICA_PASSWORD        # that service account's password
 ```
 
-**Setup blocker:** IT needs to register (or confirm) an OAuth 2.0 client-credentials client against the Wigwam Acumatica 2025R2 instance for this Worker, and provide the site's base URL. Until these three secrets are set, `/api/shipments/:id/po-lookup` will fail with a 502 (`Acumatica auth failed`); everything else in the app works without them.
+**Setup steps in Acumatica** (Connected Applications screen): set **Flow** to **Resource Owner Password Credentials**, and create/designate a dedicated service-account user (not a personal login) with a role restricted to read-only access on `PurchaseOrder` and `Vendor` — that's all `src/acumatica.ts` touches. That user's username/password are `ACUMATICA_USERNAME`/`ACUMATICA_PASSWORD` above.
 
-Until this is wired up, `po_number_raw` can still be captured (typed or AI-extracted from the email) and corrected like any other field — only the live lookup/match step depends on these secrets.
+Until all five secrets are set, `/api/shipments/:id/po-lookup` will fail with a 502 (`Acumatica auth failed`, with the actual OAuth error — e.g. `invalid_client` — included in the message); everything else in the app works without them. `po_number_raw` can still be captured (typed or AI-extracted from the email) and corrected like any other field regardless — only the live lookup/match step depends on these secrets.
 
 Vendor name is resolved with a second call to the `Vendor` entity (by `VendorID`) rather than read off the PO itself — the PurchaseOrder entity's `VendorRef` field is a free-text vendor reference number (often blank), not the vendor's name.
 

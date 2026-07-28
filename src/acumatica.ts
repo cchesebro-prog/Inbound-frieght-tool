@@ -72,12 +72,19 @@ type AcumaticaVendorResponse = {
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
 // Requires ACUMATICA_BASE_URL / ACUMATICA_CLIENT_ID / ACUMATICA_CLIENT_SECRET
-// as Worker secrets, and ACUMATICA_ENDPOINT_VERSION (a plain, non-secret var
-// in wrangler.toml — confirmed live against Wigwam's instance as
-// "25.200.001"). Secrets are NOT set yet — see README.md "Acumatica setup"
-// section. IT still needs to register an OAuth 2.0 client-credentials
-// client against the Wigwam Acumatica instance (2025R2); nothing here
-// should be assumed to already be live until that's done.
+// / ACUMATICA_USERNAME / ACUMATICA_PASSWORD as Worker secrets, and
+// ACUMATICA_ENDPOINT_VERSION (a plain, non-secret var in wrangler.toml —
+// confirmed live against Wigwam's instance as "25.200.001"). See README.md
+// "Acumatica setup" section.
+//
+// This uses the Resource Owner Password Credentials grant (grant_type
+// "password"), not Client Credentials — confirmed 2026-07-28 against
+// Wigwam's live 2025R2 instance that Client Credentials isn't an available
+// Flow option on a Connected Application at all. Every Acumatica API call is
+// tied to a specific user's role/permissions, so there's no pure app-only
+// grant; ACUMATICA_USERNAME/PASSWORD should be a dedicated service-account
+// user scoped to read-only access on PurchaseOrder/Vendor, not a personal
+// login.
 async function getAccessToken(env: Bindings): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now()) {
     return cachedToken.value;
@@ -87,9 +94,11 @@ async function getAccessToken(env: Bindings): Promise<string> {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      grant_type: "client_credentials",
+      grant_type: "password",
       client_id: env.ACUMATICA_CLIENT_ID,
       client_secret: env.ACUMATICA_CLIENT_SECRET,
+      username: env.ACUMATICA_USERNAME,
+      password: env.ACUMATICA_PASSWORD,
       scope: "api",
     }),
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
