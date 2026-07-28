@@ -60,6 +60,8 @@ This proof of concept validates the workflow but uses simulated rates and has no
 
 **Carrier API status (confirmed):** No carrier rating/booking API credentials exist today for UPS, FedEx, or XPO (or any other carrier). Phase 1 must run on simulated/estimated rates; setting up real API access is a prerequisite for Phase 2, not something already available to build against.
 
+**Update (2026-07-28):** Estes Express rate-quote API credentials now exist — the first carrier to move off this restriction. Live rate quotes (FR-3.3) are built for Estes only, see `PHASE1_BUILD_PLAN.md` section 8/9. All other carriers, and Estes booking/tendering, remain per the status above.
+
 ## 5. Scope & Phased Roadmap
 
 | Phase | Description | Rate source | ERP integration |

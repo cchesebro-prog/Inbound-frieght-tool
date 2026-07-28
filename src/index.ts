@@ -4,6 +4,7 @@ import type { Bindings, Variables } from "./types";
 import { verifyPassword, createSessionToken, verifySessionToken } from "./auth";
 import { extractShipment } from "./extraction";
 import { calculateRates } from "./rating";
+import { getEstesRateQuote } from "./estes";
 import { lookupPurchaseOrder, normalizePoNumber } from "./acumatica";
 import { withLock, BATCH_OPERATIONS_LOCK, LockHeldError } from "./locks";
 
@@ -292,7 +293,7 @@ app.post("/api/shipments/rate-batch", async (c) => {
           const originState =
             String(shipment.origin_address ?? "").match(/,\s*([A-Z]{2})\s*\d{5}/)?.[1] ?? "WI";
 
-          const quotes = calculateRates({
+          const simulatedQuotes = calculateRates({
             weightLbs: Number(shipment.weight_lbs) || 0,
             lengthIn: Number(shipment.length_in) || 0,
             widthIn: Number(shipment.width_in) || 0,
@@ -301,11 +302,44 @@ app.post("/api/shipments/rate-batch", async (c) => {
             originState,
           });
 
+          // FR-3.3: try a live Estes quote and swap it in for the simulated
+          // Estes Express estimate. Falls back to the simulated estimate
+          // (rather than failing the whole batch) if the Estes secrets
+          // aren't configured yet or the API call fails.
+          let quotes = simulatedQuotes;
+          let estesTransitDays: number | null = null;
+          try {
+            const liveEstesQuote = await getEstesRateQuote(c.env, {
+              weightLbs: Number(shipment.weight_lbs) || 0,
+              lengthIn: Number(shipment.length_in) || 0,
+              widthIn: Number(shipment.width_in) || 0,
+              heightIn: Number(shipment.height_in) || 0,
+              freightClass: Number(shipment.freight_class) || 60,
+              hazmat: Boolean(shipment.hazmat),
+              pieces: Number(shipment.pieces) || 1,
+              originAddress: String(shipment.origin_address ?? ""),
+              destinationAddress: String(shipment.destination_address ?? ""),
+            });
+            if (liveEstesQuote) {
+              quotes = simulatedQuotes
+                .filter((q) => q.carrier !== "Estes Express")
+                .concat([{ carrier: "Estes Express", price: liveEstesQuote.totalCharges }])
+                .sort((a, b) => a.price - b.price);
+              estesTransitDays = liveEstesQuote.transitDays;
+            }
+          } catch (err) {
+            console.error("Estes live rate quote failed, using simulated estimate", err);
+          }
+
           for (const [index, quote] of quotes.entries()) {
+            const transitEstimate =
+              quote.carrier === "Estes Express" && estesTransitDays != null
+                ? String(estesTransitDays)
+                : null;
             await c.env.DB.prepare(
-              "INSERT INTO carrier_quotes (shipment_id, carrier, price, is_best) VALUES (?, ?, ?, ?)"
+              "INSERT INTO carrier_quotes (shipment_id, carrier, price, transit_estimate, is_best) VALUES (?, ?, ?, ?, ?)"
             )
-              .bind(id, quote.carrier, quote.price, index === 0 ? 1 : 0)
+              .bind(id, quote.carrier, quote.price, transitEstimate, index === 0 ? 1 : 0)
               .run();
           }
 

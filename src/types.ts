@@ -16,6 +16,16 @@ export type Bindings = {
   // Escape hatch for a stuck batch-operations lock (see src/locks.ts) —
   // required by the x-admin-token header on POST /api/admin/reset-lock.
   ADMIN_RESET_TOKEN: string;
+  // Estes Express Cloud API (FR-3.3 live rate quotes, Phase 2) — see
+  // src/estes.ts and PHASE1_BUILD_PLAN.md section 8. ESTES_API_KEY was
+  // already provisioned via POST /v1/api-key (one-time, outside this app);
+  // ESTES_USERNAME/ESTES_PASSWORD Basic-auth a per-session bearer token via
+  // POST /authenticate. ESTES_ACCOUNT_NUMBER is sent as payment.account on
+  // every rate-quote request.
+  ESTES_API_KEY: string;
+  ESTES_USERNAME: string;
+  ESTES_PASSWORD: string;
+  ESTES_ACCOUNT_NUMBER: string;
 };
 
 export type Variables = {

@@ -56,6 +56,7 @@
   .quotes-table th, .quotes-table td { text-align: left; padding: 0.3rem 0.5rem; font-size: 0.85rem; border-bottom: 1px solid #eee; }
   .quotes-table tr.best { border-left: 3px solid #1D9E75; background: #f3fbf8; }
   .best-label { color: #1D9E75; font-weight: 600; }
+  .transit-days { font-size: 0.8rem; color: #666; }
 
   .card-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
   a.btn-link { display: inline-block; padding: 0.25rem 0.6rem; font-size: 0.8rem; border: 1px solid #1D9E75; color: #1D9E75; border-radius: 4px; text-decoration: none; }
@@ -486,7 +487,7 @@ Regards, Delta Cotton Yarn LLC`,
           ${shipment.quotes.map((q) => `
             <tr class="${q.is_best ? 'best' : ''}">
               <td>${q.carrier}${q.is_best ? ' <span class="best-label">★ Best</span>' : ''}</td>
-              <td>$${Number(q.price).toFixed(2)}</td>
+              <td>$${Number(q.price).toFixed(2)}${q.transit_estimate ? ` <span class="transit-days">(${q.transit_estimate}d transit)</span>` : ''}</td>
               <td>
                 ${shipment.status !== 'booked'
                   ? `<button class="small book-btn" data-shipment="${shipment.id}" data-quote="${q.id}">Book</button>`
