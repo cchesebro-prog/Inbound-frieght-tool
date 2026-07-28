@@ -23,6 +23,11 @@ export type MatchedPoLine = {
   lineDescription: string;
   orderQty: number;
   uom: string;
+  // Needed for landed-cost calculation (FR-5.3 follow-on) — the material
+  // cost side of landed cost = extendedCost, tied to a shipment's freight
+  // charge via po_number_matched/po_line_id once confirmed.
+  unitCost: number;
+  extendedCost: number;
 };
 
 export type MatchedPurchaseOrder = {
@@ -52,6 +57,8 @@ type AcumaticaPoResponse = {
     LineDescription?: AcumaticaField<string>;
     OrderQty?: AcumaticaField<number>;
     UOM?: AcumaticaField<string>;
+    UnitCost?: AcumaticaField<number>;
+    ExtendedCost?: AcumaticaField<number>;
   }[];
 };
 
@@ -128,6 +135,8 @@ export async function lookupPurchaseOrder(
       lineDescription: line.LineDescription?.value ?? "",
       orderQty: line.OrderQty?.value ?? 0,
       uom: line.UOM?.value ?? "",
+      unitCost: line.UnitCost?.value ?? 0,
+      extendedCost: line.ExtendedCost?.value ?? 0,
     })),
   };
 }

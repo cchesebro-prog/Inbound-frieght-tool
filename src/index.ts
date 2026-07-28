@@ -23,6 +23,10 @@ const ALLOWED_SHIPMENT_FIELDS = [
   "destination_address",
   "ready_date",
   "po_number_raw",
+  "actual_carrier",
+  "actual_charge",
+  "actual_mode",
+  "actual_transit_days",
 ];
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -67,6 +71,7 @@ app.use("/api/shipments/*", requireAuth);
 app.use("/api/config", requireAuth);
 app.use("/api/config/*", requireAuth);
 app.use("/api/metrics", requireAuth);
+app.use("/api/landed-cost", requireAuth);
 
 app.post("/api/shipments", async (c) => {
   const { rawInput } = await c.req.json<{ rawInput: string }>();
@@ -460,6 +465,133 @@ app.put("/api/config/freight-classes", async (c) => {
     .run();
 
   return c.json({ ok: true });
+});
+
+// FR-5.3: the shipping manager's configurable tolerance for flagging
+// actual_charge vs. the booked quote — deliberately not a hardcoded
+// constant, per the shipping manager's own call on how "reasonable" varies.
+app.get("/api/config/settings", async (c) => {
+  const row = await c.env.DB.prepare(
+    "SELECT charge_variance_threshold_pct FROM settings WHERE id = 1"
+  ).first<{ charge_variance_threshold_pct: number }>();
+  return c.json({ chargeVarianceThresholdPct: row?.charge_variance_threshold_pct ?? 5 });
+});
+
+app.put("/api/config/settings", async (c) => {
+  const { chargeVarianceThresholdPct } = await c.req.json<{ chargeVarianceThresholdPct: number }>();
+  if (typeof chargeVarianceThresholdPct !== "number" || chargeVarianceThresholdPct < 0) {
+    return c.json({ error: "chargeVarianceThresholdPct must be a non-negative number" }, 400);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE settings SET charge_variance_threshold_pct = ?, updated_by = ?, updated_at = datetime('now') WHERE id = 1`
+  )
+    .bind(chargeVarianceThresholdPct, c.get("userId"))
+    .run();
+
+  return c.json({ ok: true });
+});
+
+type PoLineSnapshot = {
+  lineNbr: number;
+  inventoryId: string;
+  lineDescription: string;
+  orderQty: number;
+  uom: string;
+  unitCost: number;
+  extendedCost: number;
+};
+
+// Landed cost = a PO line's material cost (extendedCost) + the freight
+// charges actually paid across every shipment confirmed against that line
+// (FR-6.1c: a PO line is normally fulfilled across multiple partial
+// shipments). Aggregated per line, not per shipment, since it can't be
+// finalized until every shipment against the line is in — per the shipping
+// manager's call.
+//
+// Known limitation: "qty complete" compares each shipment's weight_lbs
+// against the PO line's orderQty/uom directly. That only holds when the
+// line's UOM is weight-based (e.g. "LB", as in the real P000513 sample this
+// was designed against) — a line ordered in EA/CS/etc. would need a
+// different quantity field than weight_lbs to compare correctly, which
+// isn't handled here.
+app.get("/api/landed-cost", async (c) => {
+  const { results: shipments } = await c.env.DB.prepare(
+    `SELECT id, po_number_matched, po_line_id, po_match_data, weight_lbs, actual_charge
+     FROM shipments
+     WHERE po_number_matched IS NOT NULL AND po_line_id IS NOT NULL`
+  ).all<{
+    id: number;
+    po_number_matched: string;
+    po_line_id: string;
+    po_match_data: string | null;
+    weight_lbs: number | null;
+    actual_charge: number | null;
+  }>();
+
+  type LineGroup = {
+    poNumber: string;
+    lineId: string;
+    inventoryId: string;
+    lineDescription: string;
+    orderQty: number;
+    uom: string;
+    unitCost: number;
+    extendedCost: number;
+    shipmentIds: number[];
+    qtyShipped: number;
+    freightSoFar: number;
+    chargesComplete: boolean;
+  };
+
+  const groups = new Map<string, LineGroup>();
+
+  for (const s of shipments) {
+    const key = `${s.po_number_matched}:${s.po_line_id}`;
+    if (!groups.has(key)) {
+      let line: PoLineSnapshot | undefined;
+      if (s.po_match_data) {
+        const po = JSON.parse(s.po_match_data) as { lines: PoLineSnapshot[] };
+        line = po.lines.find((l) => String(l.lineNbr) === s.po_line_id);
+      }
+      groups.set(key, {
+        poNumber: s.po_number_matched,
+        lineId: s.po_line_id,
+        inventoryId: line?.inventoryId ?? "",
+        lineDescription: line?.lineDescription ?? "",
+        orderQty: line?.orderQty ?? 0,
+        uom: line?.uom ?? "",
+        unitCost: line?.unitCost ?? 0,
+        extendedCost: line?.extendedCost ?? 0,
+        shipmentIds: [],
+        qtyShipped: 0,
+        freightSoFar: 0,
+        chargesComplete: true,
+      });
+    }
+
+    const group = groups.get(key)!;
+    group.shipmentIds.push(s.id);
+    group.qtyShipped += Number(s.weight_lbs) || 0;
+    if (s.actual_charge !== null && s.actual_charge !== undefined) {
+      group.freightSoFar += Number(s.actual_charge);
+    } else {
+      group.chargesComplete = false;
+    }
+  }
+
+  const lines = Array.from(groups.values()).map((g) => {
+    const qtyComplete = g.orderQty > 0 && g.qtyShipped >= g.orderQty;
+    const isComplete = qtyComplete && g.chargesComplete;
+    return {
+      ...g,
+      qtyComplete,
+      isComplete,
+      landedCost: isComplete ? g.extendedCost + g.freightSoFar : null,
+    };
+  });
+
+  return c.json(lines);
 });
 
 app.get("/api/metrics", async (c) => {

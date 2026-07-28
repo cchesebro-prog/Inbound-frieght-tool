@@ -41,6 +41,10 @@
   .stat-tile .stat-label { font-size: 0.75rem; color: #666; }
   .stat-tile .stat-value { font-size: 1.25rem; font-weight: 600; }
 
+  .variance-badge { font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 999px; margin-left: 0.4rem; }
+  .variance-ok { background: #d1fae5; color: #065f46; }
+  .variance-bad { background: #fee2e2; color: #991b1b; }
+
   .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.5rem; margin: 0.75rem 0; }
   .field-grid label { display: block; font-size: 0.75rem; color: #666; margin-bottom: 0.15rem; }
   .field-grid .field-value { font-size: 0.9rem; }
@@ -107,9 +111,22 @@
   <div id="metrics-panel" style="display:none;">
     <h2 style="font-size:1rem;">Metrics</h2>
     <div class="stat-tiles" id="metrics-tiles"></div>
+
+    <div style="margin: 0.75rem 0;">
+      <label style="font-size:0.85rem; color:#666;">Charge variance threshold (%)</label><br />
+      <input type="number" id="variance-threshold-input" style="width:80px;" />
+      <button class="small" id="save-variance-threshold-btn">Save</button>
+    </div>
+
     <table class="quotes-table">
       <thead><tr><th>ID</th><th>Material</th><th>Status</th><th>Carrier</th><th>Rate</th><th>Added</th></tr></thead>
       <tbody id="history-body"></tbody>
+    </table>
+
+    <h2 style="font-size:1rem; margin-top:1.5rem;">Landed cost by PO line</h2>
+    <table class="quotes-table">
+      <thead><tr><th>PO / line</th><th>Item</th><th>Qty shipped / ordered</th><th>Material cost</th><th>Freight so far</th><th>Landed cost</th></tr></thead>
+      <tbody id="landed-cost-body"></tbody>
     </table>
   </div>
 
@@ -159,6 +176,10 @@ Regards, Delta Cotton Yarn LLC`,
     { key: 'origin_address', label: 'Origin', type: 'text' },
     { key: 'ready_date', label: 'Ready date', type: 'text' },
     { key: 'po_number_raw', label: 'PO Number (Acumatica)', type: 'text' },
+    { key: 'actual_carrier', label: 'Actual carrier', type: 'text' },
+    { key: 'actual_charge', label: 'Actual charge ($)', type: 'number' },
+    { key: 'actual_mode', label: 'Actual mode', type: 'select', options: ['', 'LTL', 'Truckload'] },
+    { key: 'actual_transit_days', label: 'Actual transit (days)', type: 'number' },
   ];
 
   const PO_STATUS_LABEL = {
@@ -184,9 +205,14 @@ Regards, Delta Cotton Yarn LLC`,
     appView.style.display = 'none';
   }
 
+  let chargeVarianceThresholdPct = 5;
+
   function showApp() {
     loginView.style.display = 'none';
     appView.style.display = 'block';
+    api('/api/config/settings').then((s) => {
+      chargeVarianceThresholdPct = s.chargeVarianceThresholdPct;
+    });
     loadShipments();
   }
 
@@ -316,6 +342,22 @@ Regards, Delta Cotton Yarn LLC`,
     `;
   }
 
+  function renderLandedCostRow(line) {
+    const status = line.isComplete
+      ? `$${Number(line.landedCost).toFixed(2)}`
+      : `Pending (${line.qtyComplete ? 'awaiting all charges' : 'awaiting remaining qty'})`;
+    return `
+      <tr>
+        <td>${line.poNumber} / ${line.lineId}</td>
+        <td>${line.inventoryId} — ${line.lineDescription}</td>
+        <td>${line.qtyShipped} / ${line.orderQty} ${line.uom}</td>
+        <td>$${Number(line.extendedCost).toFixed(2)}</td>
+        <td>$${Number(line.freightSoFar).toFixed(2)}</td>
+        <td>${status}</td>
+      </tr>
+    `;
+  }
+
   async function loadMetrics() {
     const metrics = await api('/api/metrics');
     document.getElementById('metrics-tiles').innerHTML = `
@@ -333,6 +375,13 @@ Regards, Delta Cotton Yarn LLC`,
       </div>
     `;
     document.getElementById('history-body').innerHTML = lastShipments.map(renderHistoryRow).join('');
+
+    const settings = await api('/api/config/settings');
+    chargeVarianceThresholdPct = settings.chargeVarianceThresholdPct;
+    document.getElementById('variance-threshold-input').value = chargeVarianceThresholdPct;
+
+    const landedCostLines = await api('/api/landed-cost');
+    document.getElementById('landed-cost-body').innerHTML = landedCostLines.map(renderLandedCostRow).join('');
   }
 
   document.getElementById('toggle-metrics-btn').addEventListener('click', () => {
@@ -340,6 +389,16 @@ Regards, Delta Cotton Yarn LLC`,
     const opening = panel.style.display === 'none';
     panel.style.display = opening ? 'block' : 'none';
     if (opening) loadMetrics();
+  });
+
+  document.getElementById('save-variance-threshold-btn').addEventListener('click', async () => {
+    const value = Number(document.getElementById('variance-threshold-input').value);
+    await api('/api/config/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ chargeVarianceThresholdPct: value }),
+    });
+    chargeVarianceThresholdPct = value;
+    loadShipments();
   });
 
   function downloadTextFile(filename, text) {
@@ -358,13 +417,39 @@ Regards, Delta Cotton Yarn LLC`,
     return value;
   }
 
+  function fieldEditControl(shipment, field) {
+    if (field.type === 'select') {
+      const optionsHtml = field.options.map((opt) => `
+        <option value="${opt}" ${shipment[field.key] === opt ? 'selected' : ''}>${opt || '—'}</option>
+      `).join('');
+      return `<select class="field-edit" data-field="${field.key}">${optionsHtml}</select>`;
+    }
+    return `<input class="field-edit" type="${field.type}" data-field="${field.key}"
+      value="${shipment[field.key] ?? ''}" />`;
+  }
+
+  // FR-5.3: flag when the actual freight charge diverges from the booked
+  // (or best) quote by more than the shipping manager's configurable
+  // threshold — the same check the manual process did by eyeballing it.
+  function varianceBadge(shipment) {
+    if (shipment.actual_charge === null || shipment.actual_charge === undefined) return '';
+    const quotedPrice = shipment.bookedQuote
+      ? shipment.bookedQuote.price
+      : (shipment.quotes || []).find((q) => q.is_best)?.price;
+    if (quotedPrice === undefined || quotedPrice === null || quotedPrice === 0) return '';
+
+    const variancePct = (Math.abs(shipment.actual_charge - quotedPrice) / quotedPrice) * 100;
+    const withinThreshold = variancePct <= chargeVarianceThresholdPct;
+    const cls = withinThreshold ? 'variance-ok' : 'variance-bad';
+    return `<span class="variance-badge ${cls}">${withinThreshold ? '✓' : '⚠'} ${variancePct.toFixed(1)}% vs quote</span>`;
+  }
+
   function renderCard(shipment) {
     const fieldsHtml = EDITABLE_FIELDS.map((field) => `
       <div>
         <label>${field.label}</label>
         <div class="field-value">${fieldValue(shipment, field)}</div>
-        <input class="field-edit" type="${field.type}" data-field="${field.key}"
-          value="${shipment[field.key] ?? ''}" />
+        ${fieldEditControl(shipment, field)}
       </div>
     `).join('');
 
@@ -424,6 +509,7 @@ Regards, Delta Cotton Yarn LLC`,
           <span>
             <span class="status-badge status-${shipment.status}">${shipment.status.replace('_', ' ')}</span>
             ${poBadge}
+            ${varianceBadge(shipment)}
           </span>
         </div>
         <div class="card-fields" data-mode="view">

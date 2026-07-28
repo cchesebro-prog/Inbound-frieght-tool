@@ -115,6 +115,18 @@ Acumatica write-back (FR-6.2) is still Phase 3 — this build only reads PO/vend
 
 Serializes `rate-batch`/`book-all`/`export-all` (see `src/locks.ts`) since all three read/write overlapping shipment, quote, and booking rows and would otherwise race if two users triggered them at the same time. A stuck row (holder crashed before release) is cleared via `POST /api/admin/reset-lock`, a token-gated endpoint — see section 4 and `README.md` "Clearing a stuck batch-operations lock". This is the escape hatch called for in the Operability NFR (REQUIREMENTS.md section 9): no lock should ever require a redeploy to clear.
 
+**Update (2026-07-27): FR-5.3 actuals + landed cost.** `shipments` gained `actual_carrier`, `actual_charge`, `actual_mode`, `actual_transit_days` (migration `0005_actuals_and_settings.sql`) — captured inline via the existing PATCH-based field-edit UI, same pattern as extracted fields, no new entry screen. The same migration adds a singleton `settings` table:
+
+**`settings`**
+| column | type | notes |
+|---|---|---|
+| id | integer PK (CHECK id=1) | singleton row |
+| charge_variance_threshold_pct | real | default 5; shipping-manager-configurable via `/api/config/settings` (FR-5.3b) — deliberately not hardcoded |
+| updated_by | integer FK → users | |
+| updated_at | text | |
+
+Landed cost (FR-6.6) needed one addition to the Acumatica client: `MatchedPoLine` (`src/acumatica.ts`) now also captures `unitCost`/`extendedCost` off each PO line (previously omitted — the real `P000513` PO fetched during design had `UnitCost: 5.68`, `ExtendedCost: 17040`, but the mapping only pulled `inventoryId`/`lineDescription`/`orderQty`/`uom`). Since `po_match_data` already persists the full matched-PO snapshot per shipment, this cost data is available for landed-cost calculation with no extra Acumatica call.
+
 ## 4. API Routes (Worker)
 
 | Route | Method | Purpose |
@@ -129,11 +141,13 @@ Serializes `rate-batch`/`book-all`/`export-all` (see `src/locks.ts`) since all t
 | `/api/shipments/:id/export` | GET | Export quote/confirmation (FR-4.2) |
 | `/api/shipments/book-all` / `/export-all` | POST | Batch actions (FR-4.3) |
 | `/api/config/freight-classes` | GET/PUT | View/edit freight-class default table (FR-2.2) |
-| `/api/metrics` | GET | Processed count, total booked cost, savings vs. highest quote (FR-5.1) — no parallel-run comparison data yet (FR-5.3, see milestone 5) |
+| `/api/metrics` | GET | Processed count, total booked cost, savings vs. highest quote (FR-5.1) |
 | `/api/shipments/:id/po-lookup` | POST | Look up a (typed or extracted) PO number against Acumatica; stores a pending match for review (FR-6.1, FR-6.1a) |
 | `/api/shipments/:id/po-confirm` | POST | Shipping manager confirms a specific matched PO line; pulls that line's material into the shipment (FR-6.1b) |
 | `/api/shipments/:id/po-flag-unmatched` | POST | Proceed unlinked, flag for Shipping/Purchasing reconciliation (FR-6.1d) |
 | `/api/admin/reset-lock` | POST | Clear a stuck `locks` row (all, or one by `lockName`); gated by the `x-admin-token` header matching `ADMIN_RESET_TOKEN`, not session auth |
+| `/api/config/settings` | GET/PUT | View/edit the charge-variance threshold percentage (FR-5.3b) |
+| `/api/landed-cost` | GET | Landed cost aggregated per matched PO line: material cost + freight-to-date, finalized once qty shipped ≥ ordered and every linked shipment has an actual charge (FR-6.6) |
 
 ## 5. Frontend Components
 
@@ -151,7 +165,7 @@ Serializes `rate-batch`/`book-all`/`export-all` (see `src/locks.ts`) since all t
 2. ✅ **Intake & extraction** — paste/upload → server-side Claude API extraction (Haiku 4.5) → regex fallback → correction UI (FR-1.x). Correction UI is inline edit/save on each shipment card.
 3. ✅ **Freight class config + rate engine** — rate engine (zone map, freight-class multiplier, dimensional weight) is done and running (FR-3.x). Config page UI for FR-2.2 is built: a "Freight classes" panel (toggle button in the batch-actions bar) listing the table with inline edit + an add/update row, backed by the existing `/api/config/freight-classes` API.
 4. ✅ **Booking, export, batch actions** — book/export per shipment and batch-wide (FR-4.x): quote table with best-rate highlight, per-shipment Book/Export, batch Book all/Export all (combined text download).
-5. ⏳ **Reporting** — a "Metrics" panel (toggle button next to Freight classes) is built: stat tiles (shipments processed, total booked cost, savings vs. highest quote per FR-5.1) plus a compact history table (id/material/status/carrier/rate/added) sourced from the same shipment list already loaded for the queue (FR-5.2). The parallel-run comparison view in FR-5.3 (tool estimate vs. manual-process actual) is **not** built — there's no field anywhere in the schema capturing what the manual process actually did/cost, so there's nothing to compare against yet. Capturing that is a prerequisite, not something to guess at.
+5. ✅ **Reporting** — a "Metrics" panel (toggle button next to Freight classes) is built: stat tiles (shipments processed, total booked cost, savings vs. highest quote per FR-5.1) plus a compact history table (id/material/status/carrier/rate/added) sourced from the same shipment list already loaded for the queue (FR-5.2). FR-5.3 is now built: actual-outcome fields (carrier/charge/mode/transit days) editable inline on each shipment card, a charge-variance badge against the booked/best quote using a shipping-manager-configurable threshold (FR-5.3b), and a "Landed cost by PO line" table aggregating material cost + freight-to-date per matched Acumatica PO line (FR-6.6, pulled forward alongside this since it builds directly on FR-6.1's PO/line matching). Still open: the actual LTL-vs-Truckload threshold used to validate/eventually auto-decide `actual_mode` (see section 8).
 6. **Multi-user rollout** — add remaining users' accounts, confirm auth approach with IT, begin the Phase 1 parallel run.
 7. ⏳ **PO matching (pulled forward from Phase 3, FR-6.1)** — code complete (`src/acumatica.ts`, PO-related routes, UI lookup/confirm/flag panel), blocked on IT provisioning the four `ACUMATICA_*` secrets (see `README.md`). Acumatica write-back (FR-6.2) remains out of scope until Phase 3.
 8. ✅ **Operational hardening** — batch-operations lock (`src/locks.ts`, migration `0004_locks.sql`) serializing rate-batch/book-all/export-all, with a token-gated `/api/admin/reset-lock` escape hatch; explicit timeouts added to every outbound `fetch()` (Anthropic in `src/extraction.ts`, Acumatica in `src/acumatica.ts`). Satisfies the Operability/Reliability NFRs added to REQUIREMENTS.md section 9.
@@ -168,6 +182,7 @@ Serializes `rate-batch`/`book-all`/`export-all` (see `src/locks.ts`) since all t
 - Confirm the initial list of users who need Phase 1 access beyond the shipping manager.
 - Confirm Worker/D1 naming and which Cloudflare account/environment this should deploy under.
 - **Phase 2 (Estes Express) groundwork, 2026-07-27:** reviewed the full Estes Cloud API OpenAPI spec (v1.26.30) ahead of getting real account access. Key findings, not yet built: auth needs both a provisioned `apikey` header (one-time via `POST /v1/api-key`, Basic auth) and a per-session bearer JWT (`POST /authenticate`, Basic auth); `POST /v1/rate-quotes` maps directly onto our shipment fields (weight/dims/class/hazmat/origin/destination) and returns `totalCharges`/`transitDays`; booking is two separate calls — `POST /v1/bol` tenders the shipment for a PRO number, then `POST /v1/pickup-requests` schedules the actual truck; `GET /v1/shipments/history` supports lookup by PRO **or by PO number**, which could reuse the same PO number captured for Acumatica matching (FR-6.1). Open questions before writing code: Wigwam's Estes account number, payor/terms convention (prepaid/collect, shipper/consignee/third-party), and whether handling-unit type needs a new shipment field. Each additional Phase 2 carrier (SAIA, Old Dominion, R+L) will need the same spec-review exercise once their docs are available.
+- **LTL vs. Truckload threshold:** The manual process decided mode via a simple, calculable rule (per the shipping manager), but the exact cutoff (weight, pallet count, or otherwise) hasn't been confirmed. `actual_mode` (FR-5.3a) is currently freeform-recorded only; `src/rating.ts` doesn't branch on mode at all yet.
 
 ## 9. Status
 
@@ -176,6 +191,6 @@ Serializes `rate-batch`/`book-all`/`export-all` (see `src/locks.ts`) since all t
 - Deployed and live at `https://inbound-freight-tool.cchesebro.workers.dev`. First user created; login confirmed working.
 - End-to-end loop confirmed working: intake → AI extraction → inline correction → batch rate shopping → per-shipment/batch booking → single/combined quote export.
 - Freight-class config page UI (FR-2.2) is now built (see milestone 3).
-- Metrics/history dashboard UI (FR-5.1/5.2) is now built (see milestone 5): stat tiles + compact history table, behind a "Metrics" toggle. FR-5.3 (parallel-run comparison vs. manual-process actuals) remains unbuilt — no data source for "actual" outcomes exists yet.
+- Metrics/history dashboard UI (FR-5.1/5.2/5.3) is now built (see milestone 5): stat tiles, compact history table, actual-outcome fields + charge-variance badge, and a landed-cost-by-PO-line table (FR-6.6), behind a "Metrics" toggle and inline shipment-card fields. Migration `0005_actuals_and_settings.sql` added the `actual_*` shipment columns and the `settings` table. Still open: the LTL-vs-Truckload threshold (section 8).
 - PO matching (FR-6.1) pulled forward from Phase 3: migration `0003_po_matching.sql` and PO-lookup/confirm/flag routes + UI are built (see milestone 7). Blocked on IT provisioning `ACUMATICA_BASE_URL`, `ACUMATICA_ENDPOINT_VERSION`, `ACUMATICA_CLIENT_ID`, `ACUMATICA_CLIENT_SECRET` as Worker secrets — flagged as a setup blocker, same pattern as `ANTHROPIC_API_KEY`.
 - Operational hardening (see milestone 8) is live: migration `0004_locks.sql`, `src/locks.ts`, `/api/admin/reset-lock`, and outbound-fetch timeouts. Requires `ADMIN_RESET_TOKEN` as a new Worker secret (see `README.md` "Clearing a stuck batch-operations lock") before the reset endpoint can be used — flagged as a setup item, though its absence only blocks the reset endpoint, not normal app operation.
