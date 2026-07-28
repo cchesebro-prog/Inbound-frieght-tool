@@ -156,7 +156,12 @@ export async function lookupPurchaseOrder(
 
   if (response.status === 404) return null;
   if (!response.ok) {
-    throw new Error(`Acumatica PO lookup failed: ${response.status}`);
+    // Acumatica's contract-based API returns a JSON body (often with a
+    // "message"/"exceptionMessage") describing the actual server-side
+    // failure — e.g. an access-rights exception surfaces as a 500, not a
+    // clean 403. Surface it instead of just the status code.
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Acumatica PO lookup failed: ${response.status}${detail ? ` — ${detail.slice(0, 500)}` : ""}`);
   }
 
   const body = (await response.json()) as AcumaticaPoResponse;
