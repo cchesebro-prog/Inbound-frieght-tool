@@ -22,11 +22,16 @@ export type Bindings = {
   // required by the x-admin-token header on POST /api/admin/reset-lock.
   ADMIN_RESET_TOKEN: string;
   // Estes Express Cloud API (FR-3.3 live rate quotes, Phase 2) — see
-  // src/estes.ts and PHASE1_BUILD_PLAN.md section 8. ESTES_API_KEY was
-  // already provisioned via POST /v1/api-key (one-time, outside this app);
-  // ESTES_USERNAME/ESTES_PASSWORD Basic-auth a per-session bearer token via
-  // POST /authenticate. ESTES_ACCOUNT_NUMBER is sent as payment.account on
-  // every rate-quote request.
+  // src/estes.ts and PHASE1_BUILD_PLAN.md section 8. ESTES_BASE_URL: Estes
+  // has separate UAT (uat-cloudapi.estes-express.com) and production
+  // (cloudapi.estes-express.com) hosts, confirmed via Estes' onboarding
+  // email 2026-07-28 — not a single host as the earlier spec review assumed.
+  // ESTES_API_KEY is provisioned per-environment via POST /v1/api-key (Basic
+  // auth with a Client ID/Secret, one-time, outside this app — see
+  // README.md); ESTES_USERNAME/ESTES_PASSWORD Basic-auth a per-session
+  // bearer token via POST /authenticate. ESTES_ACCOUNT_NUMBER is sent as
+  // payment.account on every rate-quote request.
+  ESTES_BASE_URL: string;
   ESTES_API_KEY: string;
   ESTES_USERNAME: string;
   ESTES_PASSWORD: string;

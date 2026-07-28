@@ -83,16 +83,19 @@ Vendor name is resolved with a second call to the `Vendor` entity (by `VendorID`
 
 ## Estes Express setup (FR-3.3 live rate quotes)
 
-Estes account credentials now exist (2026-07-28), so `src/estes.ts` calls the real Estes Cloud API (`POST /authenticate` for a per-session bearer token, then `POST /v1/rate-quotes`) instead of only estimating. What's not yet set are the four secrets:
+Estes account credentials now exist (2026-07-28), so `src/estes.ts` calls the real Estes Cloud API (`POST /authenticate` for a per-session bearer token, then `POST /v1/rate-quotes`) instead of only estimating. Estes has **separate UAT (test) and production hosts** — confirmed via Estes' onboarding email, which contradicted the earlier assumption (from the swagger.yaml spec alone) of a single host. What's not yet set are five secrets:
 
 ```bash
-npx wrangler secret put ESTES_API_KEY          # already provisioned via POST /v1/api-key, sent as the `apikey` header
+npx wrangler secret put ESTES_BASE_URL         # https://uat-cloudapi.estes-express.com (test) or https://cloudapi.estes-express.com (prod)
+npx wrangler secret put ESTES_API_KEY          # provisioned per-environment via POST /v1/api-key, sent as the `apikey` header
 npx wrangler secret put ESTES_USERNAME         # Estes account username, Basic-auth'd against POST /authenticate
 npx wrangler secret put ESTES_PASSWORD         # Estes account password
 npx wrangler secret put ESTES_ACCOUNT_NUMBER   # Wigwam's Estes account number, sent as payment.account
 ```
 
-Until these are set, `rate-batch` falls back to the simulated Estes Express estimate (same as every other carrier) rather than failing the batch — check the Worker logs for `Estes live rate quote failed` if quotes look off after setting the secrets.
+**Getting `ESTES_API_KEY`:** Estes' onboarding email provides a Client ID/Client Secret used *only* for a one-time provisioning call — `POST {base URL}/v1/api-key` with the Client ID/Secret as Basic-auth username/password. The response contains the `apiKey` (that's what becomes `ESTES_API_KEY`) plus a rotated Client Secret for any future re-provisioning call — the Client ID/Secret are never needed again for actual rate-quote/API calls, only for that one-time (or occasional re-provisioning) step. Run that curl command yourself against whichever host (UAT or prod) you're setting up — don't share the Client ID/Secret or the resulting API key in chat.
+
+Until all five secrets are set, `rate-batch` falls back to the simulated Estes Express estimate (same as every other carrier) rather than failing the batch — check the Worker logs for `Estes live rate quote failed` if quotes look off after setting the secrets.
 
 Rate quotes are requested with `payment.terms = "Prepaid"` / `payment.payor = "Shipper"` (Wigwam's confirmed terms for inbound raw-material freight — see `PHASE1_BUILD_PLAN.md` section 8) and a default handling-unit type of `PT` (pallet), since this tool doesn't track handling-unit type per shipment yet.
 

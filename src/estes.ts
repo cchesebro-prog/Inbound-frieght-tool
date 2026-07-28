@@ -1,10 +1,10 @@
 import type { Bindings } from "./types";
 
-// Single base URL confirmed in the swagger.yaml spec (v1.26.30) reviewed
-// ahead of getting real account access — no separate sandbox host; a couple
-// of write endpoints (BOL) carry a request-level isTest flag instead. See
-// PHASE1_BUILD_PLAN.md section 8.
-const ESTES_BASE_URL = "https://cloudapi.estes-express.com";
+// Base URL is a Worker secret (ESTES_BASE_URL), not hardcoded — Estes'
+// onboarding email (2026-07-28) confirmed a separate UAT/test host
+// (uat-cloudapi.estes-express.com) distinct from production
+// (cloudapi.estes-express.com), contradicting the earlier swagger.yaml spec
+// review's assumption of a single host. See README.md "Estes Express setup".
 
 // Same rationale as src/acumatica.ts — no outbound fetch() here is allowed
 // to hang indefinitely.
@@ -66,7 +66,7 @@ let cachedToken: string | null = null;
 // TTL (see getEstesRateQuote).
 async function authenticate(env: Bindings): Promise<string> {
   const credentials = btoa(`${env.ESTES_USERNAME}:${env.ESTES_PASSWORD}`);
-  const response = await fetch(`${ESTES_BASE_URL}/authenticate`, {
+  const response = await fetch(`${env.ESTES_BASE_URL}/authenticate`, {
     method: "POST",
     headers: {
       authorization: `Basic ${credentials}`,
@@ -104,7 +104,7 @@ async function callRateQuotes(
   const origin = parseAddress(shipment.originAddress);
   const destination = parseAddress(shipment.destinationAddress);
 
-  return fetch(`${ESTES_BASE_URL}/v1/rate-quotes`, {
+  return fetch(`${env.ESTES_BASE_URL}/v1/rate-quotes`, {
     method: "POST",
     headers: {
       apikey: env.ESTES_API_KEY,
