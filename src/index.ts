@@ -189,6 +189,18 @@ app.patch("/api/shipments/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+app.delete("/api/shipments/:id", async (c) => {
+  const id = c.req.param("id");
+  // D1/SQLite doesn't enforce FKs by default, so carrier_quotes/booking_decisions
+  // rows for this shipment would otherwise be orphaned rather than cascaded.
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM booking_decisions WHERE shipment_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM carrier_quotes WHERE shipment_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM shipments WHERE id = ?").bind(id),
+  ]);
+  return c.json({ ok: true });
+});
+
 // FR-6.1: look up a vendor-referenced PO number against Acumatica. This never
 // blocks or auto-confirms anything (FR-6.1b) — it just surfaces candidate
 // lines for the shipping manager to verify via /po-confirm.

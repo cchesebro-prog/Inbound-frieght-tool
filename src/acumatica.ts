@@ -28,6 +28,13 @@ export type MatchedPoLine = {
   // charge via po_number_matched/po_line_id once confirmed.
   unitCost: number;
   extendedCost: number;
+  // FR-6.1e: so the review UI can show original/open/receiving-against-this
+  // qty side by side. receivedQty is Acumatica's QtyOnReceipts (received to
+  // date across all shipments against this line, not just this one);
+  // openQty is derived (orderQty - receivedQty, floored at 0) since
+  // Acumatica doesn't expose a dedicated "open qty" field.
+  receivedQty: number;
+  openQty: number;
 };
 
 export type MatchedPurchaseOrder = {
@@ -58,6 +65,7 @@ type AcumaticaPoResponse = {
     UOM?: AcumaticaField<string>;
     UnitCost?: AcumaticaField<number>;
     ExtendedCost?: AcumaticaField<number>;
+    QtyOnReceipts?: AcumaticaField<number>;
   }[];
 };
 
@@ -184,14 +192,20 @@ export async function lookupPurchaseOrder(
     status: body.Status?.value ?? "",
     date: body.Date?.value ?? null,
     promisedOn: body.PromisedOn?.value ?? null,
-    lines: (body.Details ?? []).map((line) => ({
-      lineNbr: line.LineNbr?.value ?? 0,
-      inventoryId: line.InventoryID?.value ?? "",
-      lineDescription: line.LineDescription?.value ?? "",
-      orderQty: line.OrderQty?.value ?? 0,
-      uom: line.UOM?.value ?? "",
-      unitCost: line.UnitCost?.value ?? 0,
-      extendedCost: line.ExtendedCost?.value ?? 0,
-    })),
+    lines: (body.Details ?? []).map((line) => {
+      const orderQty = line.OrderQty?.value ?? 0;
+      const receivedQty = line.QtyOnReceipts?.value ?? 0;
+      return {
+        lineNbr: line.LineNbr?.value ?? 0,
+        inventoryId: line.InventoryID?.value ?? "",
+        lineDescription: line.LineDescription?.value ?? "",
+        orderQty,
+        uom: line.UOM?.value ?? "",
+        unitCost: line.UnitCost?.value ?? 0,
+        extendedCost: line.ExtendedCost?.value ?? 0,
+        receivedQty,
+        openQty: Math.max(orderQty - receivedQty, 0),
+      };
+    }),
   };
 }

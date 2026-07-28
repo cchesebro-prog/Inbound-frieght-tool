@@ -512,13 +512,15 @@ Regards, Delta Cotton Yarn LLC`,
         <div class="po-match-panel">
           <strong>Matched Acumatica PO ${po.orderNbr}</strong> — ${po.vendorName || po.vendorId} (${po.status})
           <table>
-            <thead><tr><th>Line</th><th>Item</th><th>Qty</th><th></th></tr></thead>
+            <thead><tr><th>Line</th><th>Item</th><th>Order qty</th><th>Open qty</th><th>This shipment</th><th></th></tr></thead>
             <tbody>
               ${po.lines.map((l) => `
                 <tr>
                   <td>${l.lineNbr}</td>
                   <td>${l.inventoryId} — ${l.lineDescription}</td>
                   <td>${l.orderQty} ${l.uom}</td>
+                  <td>${l.openQty} ${l.uom}</td>
+                  <td>${shipment.weight_lbs != null ? `${shipment.weight_lbs} lbs` : '—'}</td>
                   <td><button class="small confirm-po-btn" data-shipment="${shipment.id}" data-line="${l.lineNbr}">Confirm this line</button></td>
                 </tr>
               `).join('')}
@@ -547,6 +549,7 @@ Regards, Delta Cotton Yarn LLC`,
           <button class="secondary small save-btn" data-shipment="${shipment.id}" style="display:none;">Save</button>
           <button class="secondary small lookup-po-btn" data-shipment="${shipment.id}">Look up PO</button>
           ${canExport ? `<a class="btn-link" href="/api/shipments/${shipment.id}/export">Export</a>` : ''}
+          <button class="secondary small delete-shipment-btn" data-shipment="${shipment.id}" style="margin-left:auto; color:#b3261e; border-color:#b3261e;">Delete</button>
         </div>
         ${poPanelHtml}
         ${carrierConfirmPanel(shipment)}
@@ -563,8 +566,14 @@ Regards, Delta Cotton Yarn LLC`,
     const confirmPoBtn = e.target.closest('.confirm-po-btn');
     const flagPoBtn = e.target.closest('.flag-po-btn');
     const confirmCarrierBtn = e.target.closest('.confirm-carrier-btn');
+    const deleteBtn = e.target.closest('.delete-shipment-btn');
 
-    if (lookupPoBtn) {
+    if (deleteBtn) {
+      const id = deleteBtn.dataset.shipment;
+      if (!confirm(`Delete shipment #${id}? This cannot be undone.`)) return;
+      await api(`/api/shipments/${id}`, { method: 'DELETE' });
+      loadShipments();
+    } else if (lookupPoBtn) {
       const id = lookupPoBtn.dataset.shipment;
       const result = await api(`/api/shipments/${id}/po-lookup`, { method: 'POST', body: '{}' });
       if (result.error) alert(result.error);
