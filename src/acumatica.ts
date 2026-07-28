@@ -96,7 +96,12 @@ async function getAccessToken(env: Bindings): Promise<string> {
   });
 
   if (!response.ok) {
-    throw new Error(`Acumatica auth failed: ${response.status}`);
+    // OAuth token endpoints return the actual reason (invalid_client,
+    // unsupported_grant_type, invalid_scope, etc.) in the response body per
+    // RFC 6749 — surfacing it here instead of just the status code is the
+    // difference between "400" and knowing what to actually fix.
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Acumatica auth failed: ${response.status}${detail ? ` — ${detail.slice(0, 300)}` : ""}`);
   }
 
   const body = (await response.json()) as { access_token: string; expires_in: number };
