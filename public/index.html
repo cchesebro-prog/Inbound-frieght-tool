@@ -444,6 +444,32 @@ Regards, Delta Cotton Yarn LLC`,
     return `<span class="variance-badge ${cls}">${withinThreshold ? '✓' : '⚠'} ${variancePct.toFixed(1)}% vs quote</span>`;
   }
 
+  // FR-4.5/4.6: once a shipment is booked, the shipping manager still has to
+  // manually confirm with the carrier (no live booking API exists yet) and
+  // send the vendor a Bill of Lading. This panel records the carrier's
+  // confirmation/PRO number and offers the generated BOL for download —
+  // the BOL is available as soon as the shipment is booked, showing
+  // "Pending confirmation" until a PRO number is entered.
+  function carrierConfirmPanel(shipment) {
+    if (shipment.status !== 'booked') return '';
+    const bq = shipment.bookedQuote;
+    const confirmationNbr = bq && bq.carrierConfirmationNbr;
+
+    const confirmHtml = confirmationNbr
+      ? `<strong>Confirmed with carrier</strong> — PRO/Confirmation #: ${confirmationNbr}`
+      : `
+        <input type="text" class="confirm-carrier-input" placeholder="Carrier confirmation / PRO #" style="width:220px;" />
+        <button class="small confirm-carrier-btn" data-shipment="${shipment.id}">Confirm with carrier</button>
+      `;
+
+    return `
+      <div class="po-match-panel">
+        ${confirmHtml}
+        <a class="btn-link" href="/api/shipments/${shipment.id}/bol" style="margin-left:0.5rem;">Download BOL</a>
+      </div>
+    `;
+  }
+
   function renderCard(shipment) {
     const fieldsHtml = EDITABLE_FIELDS.map((field) => `
       <div>
@@ -522,6 +548,7 @@ Regards, Delta Cotton Yarn LLC`,
           ${canExport ? `<a class="btn-link" href="/api/shipments/${shipment.id}/export">Export</a>` : ''}
         </div>
         ${poPanelHtml}
+        ${carrierConfirmPanel(shipment)}
         ${quotesHtml}
       </div>
     `;
@@ -534,6 +561,7 @@ Regards, Delta Cotton Yarn LLC`,
     const lookupPoBtn = e.target.closest('.lookup-po-btn');
     const confirmPoBtn = e.target.closest('.confirm-po-btn');
     const flagPoBtn = e.target.closest('.flag-po-btn');
+    const confirmCarrierBtn = e.target.closest('.confirm-carrier-btn');
 
     if (lookupPoBtn) {
       const id = lookupPoBtn.dataset.shipment;
@@ -551,6 +579,21 @@ Regards, Delta Cotton Yarn LLC`,
     } else if (flagPoBtn) {
       const id = flagPoBtn.dataset.shipment;
       await api(`/api/shipments/${id}/po-flag-unmatched`, { method: 'POST', body: '{}' });
+      loadShipments();
+    } else if (confirmCarrierBtn) {
+      const id = confirmCarrierBtn.dataset.shipment;
+      const card = confirmCarrierBtn.closest('.shipment-card');
+      const input = card.querySelector('.confirm-carrier-input');
+      const confirmationNbr = input ? input.value.trim() : '';
+      if (!confirmationNbr) {
+        alert('Enter the carrier\'s confirmation/PRO number first');
+        return;
+      }
+      const result = await api(`/api/shipments/${id}/confirm-carrier`, {
+        method: 'POST',
+        body: JSON.stringify({ confirmationNbr }),
+      });
+      if (result.error) alert(result.error);
       loadShipments();
     } else if (editBtn) {
       const card = editBtn.closest('.shipment-card');
