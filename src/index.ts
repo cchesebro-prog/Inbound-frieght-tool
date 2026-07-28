@@ -130,22 +130,39 @@ app.get("/api/shipments", async (c) => {
 
   // FR-5.2 history view: the actually-booked carrier/rate, not just the best
   // quote — a shipment can be booked at a non-best rate via the per-quote
-  // Book button, so these can differ.
+  // Book button, so these can differ. Also carries the carrier confirmation
+  // (FR-4.5) so the UI can show whether a booked shipment has been confirmed
+  // with the carrier yet.
   const { results: bookings } = await c.env.DB.prepare(
-    `SELECT bd.shipment_id as shipment_id, cq.carrier as carrier, cq.price as price
+    `SELECT bd.shipment_id as shipment_id, cq.carrier as carrier, cq.price as price,
+            bd.carrier_confirmation_nbr as carrier_confirmation_nbr, bd.confirmed_at as confirmed_at
      FROM booking_decisions bd
      JOIN carrier_quotes cq ON cq.id = bd.chosen_quote_id
      WHERE bd.shipment_id IN (${placeholders})
      ORDER BY bd.booked_at ASC`
   )
     .bind(...ids)
-    .all<{ shipment_id: number; carrier: string; price: number }>();
+    .all<{
+      shipment_id: number;
+      carrier: string;
+      price: number;
+      carrier_confirmation_nbr: string | null;
+      confirmed_at: string | null;
+    }>();
 
-  const bookedQuoteByShipment = new Map<number, { carrier: string; price: number }>();
+  const bookedQuoteByShipment = new Map<
+    number,
+    { carrier: string; price: number; carrierConfirmationNbr: string | null; confirmedAt: string | null }
+  >();
   for (const booking of bookings) {
     // Ascending order + Map overwrite: the most recently booked decision wins
     // if a shipment was ever rebooked.
-    bookedQuoteByShipment.set(booking.shipment_id, { carrier: booking.carrier, price: booking.price });
+    bookedQuoteByShipment.set(booking.shipment_id, {
+      carrier: booking.carrier,
+      price: booking.price,
+      carrierConfirmationNbr: booking.carrier_confirmation_nbr,
+      confirmedAt: booking.confirmed_at,
+    });
   }
 
   const enriched = shipments.map((s) => ({
@@ -355,6 +372,36 @@ app.post("/api/shipments/book-all", async (c) => {
   }
 });
 
+// FR-4.5: since no live carrier booking API exists yet (Phase 2, see
+// REQUIREMENTS.md FR-3.3), "confirming with the carrier" after booking a
+// quote is still a manual phone/email step outside the tool — this just
+// records the confirmation/PRO number the carrier gives back, the same way
+// FR-5.3a records other manual-process outcomes.
+app.post("/api/shipments/:id/confirm-carrier", async (c) => {
+  const id = c.req.param("id");
+  const { confirmationNbr } = await c.req.json<{ confirmationNbr: string }>();
+  if (!confirmationNbr?.trim()) {
+    return c.json({ error: "confirmationNbr is required" }, 400);
+  }
+
+  const booking = await c.env.DB.prepare(
+    "SELECT id FROM booking_decisions WHERE shipment_id = ? ORDER BY booked_at DESC LIMIT 1"
+  )
+    .bind(id)
+    .first<{ id: number }>();
+  if (!booking) return c.json({ error: "Shipment isn't booked yet" }, 400);
+
+  await c.env.DB.prepare(
+    `UPDATE booking_decisions
+     SET carrier_confirmation_nbr = ?, confirmed_by = ?, confirmed_at = datetime('now')
+     WHERE id = ?`
+  )
+    .bind(confirmationNbr.trim(), c.get("userId"), booking.id)
+    .run();
+
+  return c.json({ ok: true });
+});
+
 async function buildExportText(
   db: Bindings["DB"],
   shipmentId: number
@@ -440,6 +487,90 @@ app.post("/api/shipments/export-all", async (c) => {
     if (err instanceof LockHeldError) return c.json({ error: err.message }, 409);
     throw err;
   }
+});
+
+// FR-4.6: a real Bill of Lading, generated from the shipment/booking data,
+// for the shipping manager to send to the vendor ahead of pickup — the
+// "documentation" step of the manual process described for FR-5.3.
+// Deliberately just booked, not confirmed-with-carrier, as a prerequisite:
+// the PRO/confirmation number is included when present (FR-4.5) but shows as
+// "Pending confirmation" otherwise, since managers may want to prepare this
+// paperwork before the carrier calls back.
+async function buildBolText(db: Bindings["DB"], shipmentId: number): Promise<string | null> {
+  const shipment = await db.prepare("SELECT * FROM shipments WHERE id = ?")
+    .bind(shipmentId)
+    .first<Record<string, unknown>>();
+  if (!shipment) return null;
+
+  const booking = await db
+    .prepare(
+      `SELECT bd.carrier_confirmation_nbr as carrier_confirmation_nbr, cq.carrier as carrier, cq.price as price
+       FROM booking_decisions bd
+       JOIN carrier_quotes cq ON cq.id = bd.chosen_quote_id
+       WHERE bd.shipment_id = ?
+       ORDER BY bd.booked_at DESC LIMIT 1`
+    )
+    .bind(shipmentId)
+    .first<{ carrier_confirmation_nbr: string | null; carrier: string; price: number }>();
+  if (!booking) return null;
+
+  // The PurchaseOrder entity's vendorName (src/acumatica.ts) is the only
+  // vendor name this tool ever captures — if the shipment hasn't been
+  // matched/confirmed against a PO (FR-6.1b), there's no vendor name on file
+  // to print here, so it's left blank rather than guessed from raw_input.
+  let vendorName = "—";
+  if (shipment.po_match_data) {
+    try {
+      const po = JSON.parse(shipment.po_match_data as string) as {
+        vendorName?: string;
+        vendorId?: string;
+      };
+      vendorName = po.vendorName || po.vendorId || "—";
+    } catch {
+      // po_match_data is only ever written as JSON by po-lookup; ignore if malformed.
+    }
+  }
+
+  const poRef = (shipment.po_number_matched as string) || (shipment.po_number_raw as string) || "—";
+
+  return [
+    "BILL OF LADING",
+    `Shipment #${shipment.id}    PO Reference: ${poRef}`,
+    "",
+    "SHIP FROM (Shipper / Vendor):",
+    `  ${vendorName}`,
+    `  ${shipment.origin_address ?? "—"}`,
+    "",
+    "SHIP TO (Consignee):",
+    "  Wigwam Mills, Inc.",
+    `  ${shipment.destination_address}`,
+    "",
+    `Carrier: ${booking.carrier}`,
+    `PRO / Confirmation Number: ${booking.carrier_confirmation_nbr ?? "Pending confirmation"}`,
+    `Freight Charge (quoted): $${Number(booking.price).toFixed(2)}`,
+    "",
+    "COMMODITY",
+    `  Material: ${shipment.material ?? "—"}`,
+    `  Weight: ${shipment.weight_lbs ?? "—"} lbs`,
+    `  Pieces/Pallets: ${shipment.pieces ?? "—"}`,
+    `  Dimensions (L x W x H, in): ${shipment.length_in ?? "—"} x ${shipment.width_in ?? "—"} x ${shipment.height_in ?? "—"}`,
+    `  Freight Class: ${shipment.freight_class ?? "—"}`,
+    `  Hazmat: ${shipment.hazmat ? "YES — see attached SDS" : "No"}`,
+    "",
+    `Ready Date: ${shipment.ready_date ?? "—"}`,
+    "",
+    "Shipper Signature: ______________________________   Date: ____________",
+    "Carrier Signature: ______________________________   Date: ____________",
+  ].join("\n");
+}
+
+app.get("/api/shipments/:id/bol", async (c) => {
+  const id = Number(c.req.param("id"));
+  const text = await buildBolText(c.env.DB, id);
+  if (!text) return c.json({ error: "Shipment must be booked before generating a Bill of Lading" }, 400);
+
+  c.header("Content-Disposition", `attachment; filename="shipment-${id}-bol.txt"`);
+  return c.text(text);
 });
 
 app.get("/api/config/freight-classes", async (c) => {
