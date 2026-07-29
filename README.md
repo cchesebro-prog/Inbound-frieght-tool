@@ -101,6 +101,10 @@ Rate quotes are requested with `payment.terms = "Prepaid"` / `payment.payor = "S
 
 Booking (`POST /v1/bol` + `POST /v1/pickup-requests`) is **not** wired up — tendering a shipment to Estes and scheduling a real pickup are live, hard-to-reverse actions, so that's deliberately out of scope until explicitly requested and confirmed. "Book" in this tool still only records the booking decision internally (FR-4.1); carrier confirmation stays the manual phone/email step described below.
 
+## Testing external connections
+
+A "Connections" toggle button (next to Freight classes/Metrics) opens a panel with a "Test connections" button that checks Anthropic, Acumatica, and Estes independently — each just verifies the auth handshake (`GET /api/config/connection-tests`, `testConnection()` in `src/extraction.ts`/`src/acumatica.ts`/`src/estes.ts`), not a real business operation, so it's safe to run any time. Each row shows ✓/✗ plus the actual error detail (e.g. `Estes authenticate failed: 401 — {...}`) instead of a bare status code — this is the same diagnostic surfaced before only via `wrangler tail`, now visible directly in the app to anyone who can log in, without needing CLI access.
+
 ## Clearing a stuck batch-operations lock
 
 `rate-batch` (called per shipment from the "Rate this shipment" button, or with multiple IDs at once via the API) holds a serialization lock (`src/locks.ts`) so overlapping rate calls can't race on the same quote rows. If a request holding the lock dies before releasing it (a crash, a timeout, a Worker eviction), the lock is stuck and rating starts failing with 409 "already in progress" — normally you'd need to redeploy to reset in-memory state, but this lock lives in D1, so a real reset endpoint works instead:

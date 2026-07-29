@@ -93,8 +93,8 @@ let cachedToken: { value: string; expiresAt: number } | null = null;
 // grant; ACUMATICA_USERNAME/PASSWORD should be a dedicated service-account
 // user scoped to read-only access on PurchaseOrder/Vendor, not a personal
 // login.
-async function getAccessToken(env: Bindings): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now()) {
+async function getAccessToken(env: Bindings, forceRefresh = false): Promise<string> {
+  if (!forceRefresh && cachedToken && cachedToken.expiresAt > Date.now()) {
     return cachedToken.value;
   }
 
@@ -208,4 +208,16 @@ export async function lookupPurchaseOrder(
       };
     }),
   };
+}
+
+// For the "Connections" test panel — verifies the OAuth handshake only
+// (not a real PO lookup), forcing a fresh token rather than reusing a
+// cached one so a stale success doesn't mask a since-broken credential.
+export async function testConnection(env: Bindings): Promise<{ ok: boolean; detail: string }> {
+  try {
+    await getAccessToken(env, true);
+    return { ok: true, detail: "Authenticated successfully" };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  }
 }

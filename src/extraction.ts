@@ -70,6 +70,37 @@ async function extractWithClaude(rawInput: string, apiKey: string): Promise<Extr
   return JSON.parse(text) as ExtractedShipment;
 }
 
+// For the "Connections" test panel — extractShipment() silently falls back
+// to regex on any Anthropic failure, so a bad/expired ANTHROPIC_API_KEY
+// would otherwise never surface anywhere. This makes a minimal real call
+// (1 token) instead of reusing extractWithClaude, so failures are reported
+// rather than swallowed.
+export async function testConnection(env: Bindings): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5",
+        max_tokens: 8,
+        messages: [{ role: "user", content: "ping" }],
+      }),
+      signal: AbortSignal.timeout(CLAUDE_FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      return { ok: false, detail: `Claude API error: ${response.status}${detail ? ` — ${detail.slice(0, 300)}` : ""}` };
+    }
+    return { ok: true, detail: "Authenticated successfully" };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  }
+}
+
 function extractWithRegex(rawInput: string): ExtractedShipment {
   const weightMatch = rawInput.match(/([\d,]+)\s*lbs?/i);
   const dimsMatch = rawInput.match(/(\d+)"?\s*[Ll]\s*x\s*(\d+)"?\s*[Ww]\s*x\s*(\d+)"?\s*[Hh]/);

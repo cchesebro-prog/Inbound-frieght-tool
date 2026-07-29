@@ -183,7 +183,8 @@ export async function getEstesRateQuote(
   }
 
   if (!response.ok) {
-    throw new Error(`Estes rate-quotes failed: ${response.status}`);
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Estes rate-quotes failed: ${response.status}${detail ? ` — ${detail.slice(0, 300)}` : ""}`);
   }
 
   const body = (await response.json()) as EstesRateQuotesResponse;
@@ -197,4 +198,16 @@ export async function getEstesRateQuote(
     totalCharges: parseFloat(quote.quoteRate.totalCharges),
     transitDays: quote.transitDetails?.transitDays ?? null,
   };
+}
+
+// For the "Connections" test panel — verifies the /authenticate handshake
+// only (not a real rate quote, which would need a full shipment payload),
+// forcing a fresh token rather than reusing a cached one.
+export async function testConnection(env: Bindings): Promise<{ ok: boolean; detail: string }> {
+  try {
+    await getToken(env, true);
+    return { ok: true, detail: "Authenticated successfully" };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  }
 }

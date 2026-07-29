@@ -92,6 +92,7 @@
   <div class="batch-actions">
     <button class="secondary" id="toggle-freight-classes-btn" style="margin-left:auto;">Freight classes</button>
     <button class="secondary" id="toggle-metrics-btn">Metrics</button>
+    <button class="secondary" id="toggle-connections-btn">Connections</button>
   </div>
 
   <div id="freight-classes-panel" style="display:none;">
@@ -126,6 +127,16 @@
     <table class="quotes-table">
       <thead><tr><th>PO / line</th><th>Item</th><th>Qty shipped / ordered</th><th>Material cost</th><th>Freight so far</th><th>Landed cost</th></tr></thead>
       <tbody id="landed-cost-body"></tbody>
+    </table>
+  </div>
+
+  <div id="connections-panel" style="display:none;">
+    <h2 style="font-size:1rem;">Connections</h2>
+    <p style="font-size:0.85rem; color:#666; margin-top:0;">Tests each external API's auth handshake only — safe to run any time, no effect on shipment data.</p>
+    <button class="secondary small" id="run-connection-tests-btn">Test connections</button>
+    <table class="quotes-table" style="margin-top:0.5rem;">
+      <thead><tr><th>Service</th><th>Status</th><th>Detail</th></tr></thead>
+      <tbody id="connections-body"></tbody>
     </table>
   </div>
 
@@ -197,6 +208,15 @@ Regards, Delta Cotton Yarn LLC`,
       throw new Error('Not authenticated');
     }
     return res.json();
+  }
+
+  // Connection-test detail messages are raw external API error text (from
+  // Anthropic/Acumatica/Estes response bodies) rendered via innerHTML —
+  // escape rather than trust it.
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
 
   function showLogin() {
@@ -365,6 +385,45 @@ Regards, Delta Cotton Yarn LLC`,
     const opening = panel.style.display === 'none';
     panel.style.display = opening ? 'block' : 'none';
     if (opening) loadMetrics();
+  });
+
+  function renderConnectionRow(name, result) {
+    const status = !result
+      ? '<span style="color:#666;">—</span>'
+      : result.ok
+        ? '<span style="color:#1D9E75; font-weight:600;">&#10003; OK</span>'
+        : '<span style="color:#b3261e; font-weight:600;">&#10007; Failed</span>';
+    const detail = result ? escapeHtml(result.detail) : 'Not tested yet';
+    return `<tr><td>${name}</td><td>${status}</td><td style="word-break:break-word;">${detail}</td></tr>`;
+  }
+
+  function renderConnectionsTable(results) {
+    const rows = [
+      ['Anthropic (Claude)', results && results.anthropic],
+      ['Acumatica', results && results.acumatica],
+      ['Estes Express', results && results.estes],
+    ];
+    document.getElementById('connections-body').innerHTML = rows.map(([name, r]) => renderConnectionRow(name, r)).join('');
+  }
+
+  document.getElementById('toggle-connections-btn').addEventListener('click', () => {
+    const panel = document.getElementById('connections-panel');
+    const opening = panel.style.display === 'none';
+    panel.style.display = opening ? 'block' : 'none';
+    if (opening) renderConnectionsTable(null);
+  });
+
+  document.getElementById('run-connection-tests-btn').addEventListener('click', async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    btn.textContent = 'Testing...';
+    try {
+      const results = await api('/api/config/connection-tests');
+      renderConnectionsTable(results);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Test connections';
+    }
   });
 
   document.getElementById('save-variance-threshold-btn').addEventListener('click', async () => {

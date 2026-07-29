@@ -2,10 +2,10 @@ import { Hono, type Context, type Next } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { Bindings, Variables } from "./types";
 import { verifyPassword, createSessionToken, verifySessionToken } from "./auth";
-import { extractShipment } from "./extraction";
+import { extractShipment, testConnection as testAnthropicConnection } from "./extraction";
 import { calculateRates } from "./rating";
-import { getEstesRateQuote } from "./estes";
-import { lookupPurchaseOrder, normalizePoNumber } from "./acumatica";
+import { getEstesRateQuote, testConnection as testEstesConnection } from "./estes";
+import { lookupPurchaseOrder, normalizePoNumber, testConnection as testAcumaticaConnection } from "./acumatica";
 import { withLock, BATCH_OPERATIONS_LOCK, LockHeldError } from "./locks";
 
 type AppEnv = { Bindings: Bindings; Variables: Variables };
@@ -613,6 +613,19 @@ app.put("/api/config/settings", async (c) => {
     .run();
 
   return c.json({ ok: true });
+});
+
+// Diagnostics for the "Connections" panel — tests each external API's auth
+// handshake only (Anthropic, Acumatica, Estes), not a real business
+// operation, so it's safe to run any time without side effects on shipment
+// data. Runs concurrently since the three are independent.
+app.get("/api/config/connection-tests", async (c) => {
+  const [anthropic, acumatica, estes] = await Promise.all([
+    testAnthropicConnection(c.env),
+    testAcumaticaConnection(c.env),
+    testEstesConnection(c.env),
+  ]);
+  return c.json({ anthropic, acumatica, estes });
 });
 
 type PoLineSnapshot = {
