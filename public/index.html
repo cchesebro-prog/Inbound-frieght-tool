@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Inbound Freight Tool</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { font-size: 1.25rem; }
+  .destination-bar { background: #f0f4f2; border: 1px solid #d5ddd9; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1.5rem; }
+  textarea { width: 100%; min-height: 8rem; font-family: inherit; box-sizing: border-box; }
+  button { cursor: pointer; padding: 0.5rem 1rem; border-radius: 4px; border: 1px solid #1D9E75; background: #1D9E75; color: white; font-size: 0.9rem; }
+  button.secondary { background: white; color: #1D9E75; }
+  button.small { padding: 0.25rem 0.6rem; font-size: 0.8rem; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .sample-buttons { margin: 0.5rem 0 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .batch-actions { display: flex; gap: 0.5rem; margin: 1rem 0; flex-wrap: wrap; }
+  #login-view, #app-view { display: none; }
+  input { padding: 0.4rem; box-sizing: border-box; }
+
+  .shipment-card { border: 1px solid #e0e0e0; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+  .card-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+  .card-header h3 { margin: 0; font-size: 1rem; }
+  .status-badge { font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .status-queued { background: #eee; color: #555; }
+  .status-rated { background: #dbeafe; color: #1e40af; }
+  .status-booked { background: #d1fae5; color: #065f46; }
+  .status-needs_review { background: #fee2e2; color: #991b1b; }
+
+  .po-badge { font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 999px; margin-left: 0.4rem; }
+  .po-pending_review { background: #fef3c7; color: #92400e; }
+  .po-confirmed { background: #d1fae5; color: #065f46; }
+  .po-unmatched { background: #fee2e2; color: #991b1b; }
+
+  .po-match-panel { border: 1px dashed #d5ddd9; border-radius: 6px; padding: 0.6rem 0.8rem; margin-top: 0.75rem; font-size: 0.85rem; }
+  .po-match-panel table { width: 100%; border-collapse: collapse; margin-top: 0.4rem; }
+  .po-match-panel th, .po-match-panel td { text-align: left; padding: 0.2rem 0.4rem; font-size: 0.8rem; }
+
+  .stat-tiles { display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 0.75rem 0 1rem; }
+  .stat-tile { background: #f0f4f2; border: 1px solid #d5ddd9; border-radius: 6px; padding: 0.6rem 1rem; min-width: 140px; }
+  .stat-tile .stat-label { font-size: 0.75rem; color: #666; }
+  .stat-tile .stat-value { font-size: 1.25rem; font-weight: 600; }
+
+  .variance-badge { font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 999px; margin-left: 0.4rem; }
+  .variance-ok { background: #d1fae5; color: #065f46; }
+  .variance-bad { background: #fee2e2; color: #991b1b; }
+
+  .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.5rem; margin: 0.75rem 0; }
+  .field-grid label { display: block; font-size: 0.75rem; color: #666; margin-bottom: 0.15rem; }
+  .field-grid .field-value { font-size: 0.9rem; }
+  .field-grid input { width: 100%; font-size: 0.9rem; }
+  .card-fields[data-mode="view"] .field-edit { display: none; }
+  .card-fields[data-mode="edit"] .field-value { display: none; }
+
+  .quotes-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+  .quotes-table th, .quotes-table td { text-align: left; padding: 0.3rem 0.5rem; font-size: 0.85rem; border-bottom: 1px solid #eee; }
+  .quotes-table tr.best { border-left: 3px solid #1D9E75; background: #f3fbf8; }
+  .best-label { color: #1D9E75; font-weight: 600; }
+  .live-label { background: #1e40af; color: white; font-size: 0.65rem; font-weight: 700; padding: 0.05rem 0.35rem; border-radius: 3px; letter-spacing: 0.03em; }
+  .transit-days { font-size: 0.8rem; color: #666; }
+
+  .card-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
+  a.btn-link { display: inline-block; padding: 0.25rem 0.6rem; font-size: 0.8rem; border: 1px solid #1D9E75; color: #1D9E75; border-radius: 4px; text-decoration: none; }
+</style>
+</head>
+<body>
+
+<div id="login-view">
+  <h1>Inbound Freight Tool — Sign in</h1>
+  <form id="login-form">
+    <input type="email" id="login-email" placeholder="Email" required />
+    <input type="password" id="login-password" placeholder="Password" required />
+    <button type="submit">Sign in</button>
+  </form>
+  <p id="login-error" style="color: #b3261e;"></p>
+</div>
+
+<div id="app-view">
+  <h1>Inbound Freight Tool <button class="secondary" id="logout-btn" style="float:right;">Sign out</button></h1>
+
+  <div class="destination-bar">Delivering to: 5300 WI-42, Sheboygan, WI 53083</div>
+
+  <textarea id="raw-input" placeholder="Paste a supplier email here..."></textarea>
+  <div class="sample-buttons">
+    <button class="secondary small" data-sample="wool">Wool yarn</button>
+    <button class="secondary small" data-sample="synthetic">Synthetic yarn</button>
+    <button class="secondary small" data-sample="cotton">Cotton yarn</button>
+    <button class="secondary small" data-sample="blank">Blank</button>
+  </div>
+  <button id="add-shipment-btn">Add shipment</button>
+
+  <div class="batch-actions">
+    <button class="secondary" id="toggle-freight-classes-btn" style="margin-left:auto;">Freight classes</button>
+    <button class="secondary" id="toggle-metrics-btn">Metrics</button>
+    <button class="secondary" id="toggle-connections-btn">Connections</button>
+  </div>
+
+  <div id="freight-classes-panel" style="display:none;">
+    <h2 style="font-size:1rem;">Freight class defaults</h2>
+    <table class="quotes-table">
+      <thead><tr><th>Material</th><th>Freight class</th><th>Last updated</th><th></th></tr></thead>
+      <tbody id="freight-classes-body"></tbody>
+    </table>
+    <div style="display:flex; gap:0.5rem; margin-top:0.75rem;">
+      <input type="text" id="new-material-input" placeholder="Material (e.g. wool yarn)" style="flex:1;" />
+      <input type="number" id="new-freight-class-input" placeholder="Freight class" style="width:120px;" />
+      <button class="small" id="add-freight-class-btn">Add / update</button>
+    </div>
+  </div>
+
+  <div id="metrics-panel" style="display:none;">
+    <h2 style="font-size:1rem;">Metrics</h2>
+    <div class="stat-tiles" id="metrics-tiles"></div>
+
+    <div style="margin: 0.75rem 0;">
+      <label style="font-size:0.85rem; color:#666;">Charge variance threshold (%)</label><br />
+      <input type="number" id="variance-threshold-input" style="width:80px;" />
+      <button class="small" id="save-variance-threshold-btn">Save</button>
+    </div>
+
+    <table class="quotes-table">
+      <thead><tr><th>ID</th><th>Material</th><th>Status</th><th>Carrier</th><th>Rate</th><th>Added</th></tr></thead>
+      <tbody id="history-body"></tbody>
+    </table>
+
+    <h2 style="font-size:1rem; margin-top:1.5rem;">Landed cost by PO line</h2>
+    <table class="quotes-table">
+      <thead><tr><th>PO / line</th><th>Item</th><th>Qty shipped / ordered</th><th>Material cost</th><th>Freight so far</th><th>Landed cost</th></tr></thead>
+      <tbody id="landed-cost-body"></tbody>
+    </table>
+  </div>
+
+  <div id="connections-panel" style="display:none;">
+    <h2 style="font-size:1rem;">Connections</h2>
+    <p style="font-size:0.85rem; color:#666; margin-top:0;">Tests each external API's auth handshake only — safe to run any time, no effect on shipment data.</p>
+    <button class="secondary small" id="run-connection-tests-btn">Test connections</button>
+    <table class="quotes-table" style="margin-top:0.5rem;">
+      <thead><tr><th>Service</th><th>Status</th><th>Detail</th></tr></thead>
+      <tbody id="connections-body"></tbody>
+    </table>
+  </div>
+
+  <div id="shipments-container"></div>
+</div>
+
+<script>
+  const loginView = document.getElementById('login-view');
+  const appView = document.getElementById('app-view');
+  const shipmentsContainer = document.getElementById('shipments-container');
+
+  const SAMPLE_EMAILS = {
+    wool: `Hi team, please arrange pickup for our latest wool order:
+Material: Wool yarn cones (natural fiber)
+Total weight: 2,800 lbs
+Dimensions: 48" L x 40" W x 52" H
+Pallet count: 6
+Origin: 400 Textile Mill Rd, Gastonia, NC 28052
+Pickup available: Tomorrow 7am-2pm
+Hazmat: No
+Thanks, Appalachian Wool Supply Co.`,
+    synthetic: `Team, synthetic yarn shipment ready for pickup:
+- Product: Polyester filament yarn, cone-wound
+- Weight: 4,100 lbs
+- Packaging: 8 pallets, 48x40x60 inches each
+- Ship from: 1800 Fiber Park Dr, Spartanburg, SC 29301
+- Available: Monday after 6am
+Best, SynthFiber Industries`,
+    cotton: `Hello, cotton yarn shipment details:
+Item: Ring-spun cotton yarn, bagged in poly
+Weight: 3,600 lbs
+Packaging: 5 pallets, 48x40x56 each
+Pickup address: 220 Cotton Row, Greenville, MS 38701
+Ready date: Thursday morning
+Regards, Delta Cotton Yarn LLC`,
+    blank: '',
+  };
+
+  const EDITABLE_FIELDS = [
+    { key: 'material', label: 'Material', type: 'text' },
+    { key: 'freight_class', label: 'Freight class', type: 'number' },
+    { key: 'weight_lbs', label: 'Weight (lbs)', type: 'number' },
+    { key: 'pieces', label: 'Pieces', type: 'number' },
+    { key: 'length_in', label: 'Length (in)', type: 'number' },
+    { key: 'width_in', label: 'Width (in)', type: 'number' },
+    { key: 'height_in', label: 'Height (in)', type: 'number' },
+    { key: 'origin_address', label: 'Origin', type: 'text' },
+    { key: 'ready_date', label: 'Ready date', type: 'text' },
+    { key: 'po_number_raw', label: 'PO Number (Acumatica)', type: 'text' },
+    { key: 'actual_carrier', label: 'Actual carrier', type: 'text' },
+    { key: 'actual_charge', label: 'Actual charge ($)', type: 'number' },
+    { key: 'actual_mode', label: 'Actual mode', type: 'select', options: ['', 'LTL', 'Truckload'] },
+    { key: 'actual_transit_days', label: 'Actual transit (days)', type: 'number' },
+  ];
+
+  const PO_STATUS_LABEL = {
+    pending_review: 'PO match — needs review',
+    confirmed: 'PO confirmed',
+    unmatched: 'PO unmatched — flagged',
+  };
+
+  async function api(path, options = {}) {
+    const res = await fetch(path, {
+      ...options,
+      headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+    });
+    if (res.status === 401) {
+      showLogin();
+      throw new Error('Not authenticated');
+    }
+    return res.json();
+  }
+
+  // Connection-test detail messages are raw external API error text (from
+  // Anthropic/Acumatica/Estes response bodies) rendered via innerHTML —
+  // escape rather than trust it.
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  function showLogin() {
+    loginView.style.display = 'block';
+    appView.style.display = 'none';
+  }
+
+  let chargeVarianceThresholdPct = 5;
+
+  function showApp() {
+    loginView.style.display = 'none';
+    appView.style.display = 'block';
+    api('/api/config/settings').then((s) => {
+      chargeVarianceThresholdPct = s.chargeVarianceThresholdPct;
+    });
+    loadShipments();
+  }
+
+  document.getElementById('login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    if (res.ok) {
+      showApp();
+    } else {
+      document.getElementById('login-error').textContent = 'Invalid credentials';
+    }
+  });
+
+  document.getElementById('logout-btn').addEventListener('click', async () => {
+    await api('/api/logout', { method: 'POST' });
+    showLogin();
+  });
+
+  document.querySelectorAll('[data-sample]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.getElementById('raw-input').value = SAMPLE_EMAILS[btn.dataset.sample];
+    });
+  });
+
+  document.getElementById('add-shipment-btn').addEventListener('click', async () => {
+    const rawInput = document.getElementById('raw-input').value;
+    if (!rawInput.trim()) return;
+    await api('/api/shipments', { method: 'POST', body: JSON.stringify({ rawInput }) });
+    document.getElementById('raw-input').value = '';
+    loadShipments();
+  });
+
+  const freightClassesPanel = document.getElementById('freight-classes-panel');
+  const freightClassesBody = document.getElementById('freight-classes-body');
+
+  function renderFreightClassRow(row) {
+    return `
+      <tr>
+        <td>${row.material}</td>
+        <td><input type="number" class="freight-class-edit" value="${row.freight_class}" style="width:80px;" /></td>
+        <td>${row.updated_at ?? '—'}</td>
+        <td><button class="small save-freight-class-btn" data-material="${row.material}">Save</button></td>
+      </tr>
+    `;
+  }
+
+  async function loadFreightClasses() {
+    const rows = await api('/api/config/freight-classes');
+    freightClassesBody.innerHTML = rows.map(renderFreightClassRow).join('');
+  }
+
+  document.getElementById('toggle-freight-classes-btn').addEventListener('click', () => {
+    const opening = freightClassesPanel.style.display === 'none';
+    freightClassesPanel.style.display = opening ? 'block' : 'none';
+    if (opening) loadFreightClasses();
+  });
+
+  freightClassesBody.addEventListener('click', async (e) => {
+    const saveBtn = e.target.closest('.save-freight-class-btn');
+    if (!saveBtn) return;
+    const material = saveBtn.dataset.material;
+    const freightClass = Number(saveBtn.closest('tr').querySelector('.freight-class-edit').value);
+    await api('/api/config/freight-classes', {
+      method: 'PUT',
+      body: JSON.stringify({ material, freightClass }),
+    });
+    loadFreightClasses();
+  });
+
+  document.getElementById('add-freight-class-btn').addEventListener('click', async () => {
+    const materialInput = document.getElementById('new-material-input');
+    const classInput = document.getElementById('new-freight-class-input');
+    const material = materialInput.value.trim();
+    const freightClass = Number(classInput.value);
+    if (!material || !freightClass) return;
+    await api('/api/config/freight-classes', {
+      method: 'PUT',
+      body: JSON.stringify({ material, freightClass }),
+    });
+    materialInput.value = '';
+    classInput.value = '';
+    loadFreightClasses();
+  });
+
+  let lastShipments = [];
+
+  function renderHistoryRow(shipment) {
+    const quote = shipment.bookedQuote || (shipment.quotes || []).find((q) => q.is_best);
+    return `
+      <tr>
+        <td>${shipment.id}</td>
+        <td>${shipment.material ?? '—'}</td>
+        <td>${shipment.status.replace('_', ' ')}</td>
+        <td>${quote ? quote.carrier : '—'}</td>
+        <td>${quote ? '$' + Number(quote.price).toFixed(2) : '—'}</td>
+        <td>${shipment.created_at ?? '—'}</td>
+      </tr>
+    `;
+  }
+
+  function renderLandedCostRow(line) {
+    const status = line.isComplete
+      ? `$${Number(line.landedCost).toFixed(2)}`
+      : `Pending (${line.qtyComplete ? 'awaiting all charges' : 'awaiting remaining qty'})`;
+    return `
+      <tr>
+        <td>${line.poNumber} / ${line.lineId}</td>
+        <td>${line.inventoryId} — ${line.lineDescription}</td>
+        <td>${line.qtyShipped} / ${line.orderQty} ${line.uom}</td>
+        <td>$${Number(line.extendedCost).toFixed(2)}</td>
+        <td>$${Number(line.freightSoFar).toFixed(2)}</td>
+        <td>${status}</td>
+      </tr>
+    `;
+  }
+
+  async function loadMetrics() {
+    const metrics = await api('/api/metrics');
+    document.getElementById('metrics-tiles').innerHTML = `
+      <div class="stat-tile">
+        <div class="stat-label">Shipments processed</div>
+        <div class="stat-value">${metrics.processed}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Total booked cost</div>
+        <div class="stat-value">$${Number(metrics.totalBookedCost).toFixed(2)}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Savings vs. highest quote</div>
+        <div class="stat-value">$${Number(metrics.totalSavingsVsHighestQuote).toFixed(2)}</div>
+      </div>
+    `;
+    document.getElementById('history-body').innerHTML = lastShipments.map(renderHistoryRow).join('');
+
+    const settings = await api('/api/config/settings');
+    chargeVarianceThresholdPct = settings.chargeVarianceThresholdPct;
+    document.getElementById('variance-threshold-input').value = chargeVarianceThresholdPct;
+
+    const landedCostLines = await api('/api/landed-cost');
+    document.getElementById('landed-cost-body').innerHTML = landedCostLines.map(renderLandedCostRow).join('');
+  }
+
+  document.getElementById('toggle-metrics-btn').addEventListener('click', () => {
+    const panel = document.getElementById('metrics-panel');
+    const opening = panel.style.display === 'none';
+    panel.style.display = opening ? 'block' : 'none';
+    if (opening) loadMetrics();
+  });
+
+  function renderConnectionRow(name, result) {
+    const status = !result
+      ? '<span style="color:#666;">—</span>'
+      : result.ok
+        ? '<span style="color:#1D9E75; font-weight:600;">&#10003; OK</span>'
+        : '<span style="color:#b3261e; font-weight:600;">&#10007; Failed</span>';
+    const detail = result ? escapeHtml(result.detail) : 'Not tested yet';
+    return `<tr><td>${name}</td><td>${status}</td><td style="word-break:break-word;">${detail}</td></tr>`;
+  }
+
+  function renderConnectionsTable(results) {
+    const rows = [
+      ['Anthropic (Claude)', results && results.anthropic],
+      ['Acumatica', results && results.acumatica],
+      ['Estes Express', results && results.estes],
+    ];
+    document.getElementById('connections-body').innerHTML = rows.map(([name, r]) => renderConnectionRow(name, r)).join('');
+  }
+
+  document.getElementById('toggle-connections-btn').addEventListener('click', () => {
+    const panel = document.getElementById('connections-panel');
+    const opening = panel.style.display === 'none';
+    panel.style.display = opening ? 'block' : 'none';
+    if (opening) renderConnectionsTable(null);
+  });
+
+  document.getElementById('run-connection-tests-btn').addEventListener('click', async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    btn.textContent = 'Testing...';
+    try {
+      const results = await api('/api/config/connection-tests');
+      renderConnectionsTable(results);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Test connections';
+    }
+  });
+
+  document.getElementById('save-variance-threshold-btn').addEventListener('click', async () => {
+    const value = Number(document.getElementById('variance-threshold-input').value);
+    await api('/api/config/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ chargeVarianceThresholdPct: value }),
+    });
+    chargeVarianceThresholdPct = value;
+    loadShipments();
+  });
+
+  function fieldValue(shipment, field) {
+    const value = shipment[field.key];
+    if (value === null || value === undefined || value === '') return '—';
+    return value;
+  }
+
+  function fieldEditControl(shipment, field) {
+    if (field.type === 'select') {
+      const optionsHtml = field.options.map((opt) => `
+        <option value="${opt}" ${shipment[field.key] === opt ? 'selected' : ''}>${opt || '—'}</option>
+      `).join('');
+      return `<select class="field-edit" data-field="${field.key}">${optionsHtml}</select>`;
+    }
+    return `<input class="field-edit" type="${field.type}" data-field="${field.key}"
+      value="${shipment[field.key] ?? ''}" />`;
+  }
+
+  // FR-5.3: flag when the actual freight charge diverges from the booked
+  // (or best) quote by more than the shipping manager's configurable
+  // threshold — the same check the manual process did by eyeballing it.
+  function varianceBadge(shipment) {
+    if (shipment.actual_charge === null || shipment.actual_charge === undefined) return '';
+    const quotedPrice = shipment.bookedQuote
+      ? shipment.bookedQuote.price
+      : (shipment.quotes || []).find((q) => q.is_best)?.price;
+    if (quotedPrice === undefined || quotedPrice === null || quotedPrice === 0) return '';
+
+    const variancePct = (Math.abs(shipment.actual_charge - quotedPrice) / quotedPrice) * 100;
+    const withinThreshold = variancePct <= chargeVarianceThresholdPct;
+    const cls = withinThreshold ? 'variance-ok' : 'variance-bad';
+    return `<span class="variance-badge ${cls}">${withinThreshold ? '✓' : '⚠'} ${variancePct.toFixed(1)}% vs quote</span>`;
+  }
+
+  // FR-4.5/4.6: once a shipment is booked, the shipping manager still has to
+  // manually confirm with the carrier (no live booking API exists yet) and
+  // send the vendor a Bill of Lading. This panel records the carrier's
+  // confirmation/PRO number and offers the generated BOL for download —
+  // the BOL is available as soon as the shipment is booked, showing
+  // "Pending confirmation" until a PRO number is entered.
+  function carrierConfirmPanel(shipment) {
+    if (shipment.status !== 'booked') return '';
+    const bq = shipment.bookedQuote;
+    const confirmationNbr = bq && bq.carrierConfirmationNbr;
+
+    const confirmHtml = confirmationNbr
+      ? `<strong>Confirmed with carrier</strong> — PRO/Confirmation #: ${confirmationNbr}`
+      : `
+        <input type="text" class="confirm-carrier-input" placeholder="Carrier confirmation / PRO #" style="width:220px;" />
+        <button class="small confirm-carrier-btn" data-shipment="${shipment.id}">Confirm with carrier</button>
+      `;
+
+    return `
+      <div class="po-match-panel">
+        ${confirmHtml}
+        <a class="btn-link" href="/api/shipments/${shipment.id}/bol" style="margin-left:0.5rem;">Download BOL</a>
+      </div>
+    `;
+  }
+
+  function renderCard(shipment) {
+    const fieldsHtml = EDITABLE_FIELDS.map((field) => `
+      <div>
+        <label>${field.label}</label>
+        <div class="field-value">${fieldValue(shipment, field)}</div>
+        ${fieldEditControl(shipment, field)}
+      </div>
+    `).join('');
+
+    const quotesHtml = shipment.quotes.length === 0 ? '' : `
+      <table class="quotes-table">
+        <thead><tr><th>Carrier</th><th>Price</th><th></th></tr></thead>
+        <tbody>
+          ${shipment.quotes.map((q) => `
+            <tr class="${q.is_best ? 'best' : ''}">
+              <td>${q.carrier}${q.is_live ? ' <span class="live-label">LIVE</span>' : ''}${q.is_best ? ' <span class="best-label">★ Best</span>' : ''}</td>
+              <td>$${Number(q.price).toFixed(2)}${q.transit_estimate ? ` <span class="transit-days">(${q.transit_estimate}d transit)</span>` : ''}</td>
+              <td>
+                ${shipment.status !== 'booked'
+                  ? `<button class="small book-btn" data-shipment="${shipment.id}" data-quote="${q.id}">Book</button>`
+                  : ''}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      ${shipment.estes_last_error ? `<p style="font-size:0.75rem; color:#b3261e; margin:0.25rem 0 0;">Estes Express fell back to a simulated estimate: ${escapeHtml(shipment.estes_last_error)}</p>` : ''}
+    `;
+
+    const canExport = shipment.status === 'rated' || shipment.status === 'booked';
+    const poStatus = shipment.po_reconciliation_status;
+    const poBadge = poStatus && poStatus !== 'not_applicable'
+      ? `<span class="po-badge po-${poStatus}">${PO_STATUS_LABEL[poStatus] ?? poStatus}</span>`
+      : '';
+
+    let poPanelHtml = '';
+    if (poStatus === 'pending_review' && shipment.po_match_data) {
+      const po = JSON.parse(shipment.po_match_data);
+      poPanelHtml = `
+        <div class="po-match-panel">
+          <strong>Matched Acumatica PO ${po.orderNbr}</strong> — ${po.vendorName || po.vendorId} (${po.status})
+          <table>
+            <thead><tr><th>Line</th><th>Item</th><th>Order qty</th><th>Open qty</th><th>This shipment</th><th></th></tr></thead>
+            <tbody>
+              ${po.lines.map((l) => `
+                <tr>
+                  <td>${l.lineNbr}</td>
+                  <td>${l.inventoryId} — ${l.lineDescription}</td>
+                  <td>${l.orderQty} ${l.uom}</td>
+                  <td>${l.openQty} ${l.uom}</td>
+                  <td>${shipment.weight_lbs != null ? `${shipment.weight_lbs} lbs` : '—'}</td>
+                  <td><button class="small confirm-po-btn" data-shipment="${shipment.id}" data-line="${l.lineNbr}">Confirm this line</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <button class="secondary small flag-po-btn" data-shipment="${shipment.id}" style="margin-top:0.4rem;">Not a match — flag for reconciliation</button>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="shipment-card" data-id="${shipment.id}">
+        <div class="card-header">
+          <h3>#${shipment.id} — ${shipment.material ?? 'Unknown material'}</h3>
+          <span>
+            <span class="status-badge status-${shipment.status}">${shipment.status.replace('_', ' ')}</span>
+            ${poBadge}
+            ${varianceBadge(shipment)}
+          </span>
+        </div>
+        <div class="card-fields" data-mode="view">
+          <div class="field-grid">${fieldsHtml}</div>
+        </div>
+        <div class="card-actions">
+          <button class="secondary small edit-toggle-btn" data-shipment="${shipment.id}">Edit</button>
+          <button class="secondary small save-btn" data-shipment="${shipment.id}" style="display:none;">Save</button>
+          ${shipment.status === 'queued' ? `<button class="secondary small rate-shipment-btn" data-shipment="${shipment.id}">Rate this shipment</button>` : ''}
+          ${shipment.status === 'rated' ? `<button class="secondary small rate-shipment-btn" data-shipment="${shipment.id}">Re-Rate Shipment</button>` : ''}
+          <button class="secondary small lookup-po-btn" data-shipment="${shipment.id}">Look up PO</button>
+          ${canExport ? `<a class="btn-link" href="/api/shipments/${shipment.id}/export">Export</a>` : ''}
+          <button class="secondary small delete-shipment-btn" data-shipment="${shipment.id}" style="margin-left:auto; color:#b3261e; border-color:#b3261e;">Delete</button>
+        </div>
+        ${poPanelHtml}
+        ${carrierConfirmPanel(shipment)}
+        ${quotesHtml}
+      </div>
+    `;
+  }
+
+  shipmentsContainer.addEventListener('click', async (e) => {
+    const editBtn = e.target.closest('.edit-toggle-btn');
+    const saveBtn = e.target.closest('.save-btn');
+    const bookBtn = e.target.closest('.book-btn');
+    const lookupPoBtn = e.target.closest('.lookup-po-btn');
+    const confirmPoBtn = e.target.closest('.confirm-po-btn');
+    const flagPoBtn = e.target.closest('.flag-po-btn');
+    const confirmCarrierBtn = e.target.closest('.confirm-carrier-btn');
+    const deleteBtn = e.target.closest('.delete-shipment-btn');
+    const rateBtn = e.target.closest('.rate-shipment-btn');
+
+    if (deleteBtn) {
+      const id = deleteBtn.dataset.shipment;
+      if (!confirm(`Delete shipment #${id}? This cannot be undone.`)) return;
+      await api(`/api/shipments/${id}`, { method: 'DELETE' });
+      loadShipments();
+    } else if (rateBtn) {
+      const id = rateBtn.dataset.shipment;
+      await api('/api/shipments/rate-batch', {
+        method: 'POST',
+        body: JSON.stringify({ shipmentIds: [Number(id)] }),
+      });
+      loadShipments();
+    } else if (lookupPoBtn) {
+      const id = lookupPoBtn.dataset.shipment;
+      const result = await api(`/api/shipments/${id}/po-lookup`, { method: 'POST', body: '{}' });
+      if (result.error) alert(result.error);
+      else if (result.matched === false) alert('No matching PO found in Acumatica — flagged for reconciliation.');
+      loadShipments();
+    } else if (confirmPoBtn) {
+      const { shipment: id, line } = confirmPoBtn.dataset;
+      await api(`/api/shipments/${id}/po-confirm`, {
+        method: 'POST',
+        body: JSON.stringify({ lineNbr: Number(line) }),
+      });
+      loadShipments();
+    } else if (flagPoBtn) {
+      const id = flagPoBtn.dataset.shipment;
+      await api(`/api/shipments/${id}/po-flag-unmatched`, { method: 'POST', body: '{}' });
+      loadShipments();
+    } else if (confirmCarrierBtn) {
+      const id = confirmCarrierBtn.dataset.shipment;
+      const card = confirmCarrierBtn.closest('.shipment-card');
+      const input = card.querySelector('.confirm-carrier-input');
+      const confirmationNbr = input ? input.value.trim() : '';
+      if (!confirmationNbr) {
+        alert('Enter the carrier\'s confirmation/PRO number first');
+        return;
+      }
+      const result = await api(`/api/shipments/${id}/confirm-carrier`, {
+        method: 'POST',
+        body: JSON.stringify({ confirmationNbr }),
+      });
+      if (result.error) alert(result.error);
+      loadShipments();
+    } else if (editBtn) {
+      const card = editBtn.closest('.shipment-card');
+      const fields = card.querySelector('.card-fields');
+      fields.dataset.mode = 'edit';
+      editBtn.style.display = 'none';
+      card.querySelector('.save-btn').style.display = 'inline-block';
+    } else if (saveBtn) {
+      const card = saveBtn.closest('.shipment-card');
+      const id = saveBtn.dataset.shipment;
+      const updates = {};
+      card.querySelectorAll('.field-edit').forEach((input) => {
+        const raw = input.value;
+        updates[input.dataset.field] = input.type === 'number' && raw !== '' ? Number(raw) : raw;
+      });
+      await api(`/api/shipments/${id}`, { method: 'PATCH', body: JSON.stringify(updates) });
+      loadShipments();
+    } else if (bookBtn) {
+      const { shipment: shipmentId, quote: quoteId } = bookBtn.dataset;
+      await api(`/api/shipments/${shipmentId}/book`, {
+        method: 'POST',
+        body: JSON.stringify({ chosenQuoteId: Number(quoteId) }),
+      });
+      loadShipments();
+    }
+  });
+
+  async function loadShipments() {
+    const shipments = await api('/api/shipments');
+    lastShipments = shipments;
+    shipmentsContainer.innerHTML = shipments.map(renderCard).join('');
+  }
+
+  // Assume logged out until an authenticated call proves otherwise.
+  api('/api/shipments').then(showApp).catch(showLogin);
+</script>
+
+</body>
+</html>

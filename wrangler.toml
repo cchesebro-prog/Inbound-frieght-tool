@@ -1,0 +1,43 @@
+name = "inbound-freight-tool"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# Explicit so `wrangler deploy` doesn't warn about relying on defaults.
+# workers_dev = true: this Worker is currently only reachable at the
+# *.workers.dev subdomain (no custom domain configured yet). It's still
+# safe to expose — every /api/* route other than /api/login requires an
+# authenticated session cookie.
+workers_dev = true
+# preview_urls = false: don't generate separate public preview URLs for
+# non-production versions.
+preview_urls = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "inbound-freight-tool-db"
+database_id = "acbc7790-3593-4917-ad72-c4d0712010b9"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# Not secret — the contract-based REST endpoint version, confirmed live
+# against Wigwam's Acumatica 2025R2 instance (FR-6.1 PO matching). Safe to
+# commit; only the OAuth credentials and site URL below are secrets.
+[vars]
+ACUMATICA_ENDPOINT_VERSION = "25.200.001"
+
+# Secrets — set with `wrangler secret put <NAME>`, never committed here:
+#   ANTHROPIC_API_KEY          Claude API key used server-side for shipment extraction
+#   SESSION_SECRET             HMAC key used to sign session cookies
+#   ACUMATICA_BASE_URL         Acumatica site root, e.g. https://acm.wigwam.com (FR-6.1 PO matching, see README.md)
+#   ACUMATICA_CLIENT_ID        OAuth 2.0 Connected Application Client ID (Resource Owner Password Credentials flow)
+#   ACUMATICA_CLIENT_SECRET    OAuth 2.0 Connected Application shared secret
+#   ACUMATICA_USERNAME         Dedicated Acumatica service-account username (read-only PurchaseOrder/Vendor access)
+#   ACUMATICA_PASSWORD         Password for ACUMATICA_USERNAME
+#   ADMIN_RESET_TOKEN          Shared secret for POST /api/admin/reset-lock (clears a stuck batch-operations lock)
+#   ESTES_BASE_URL             Estes Cloud API host, e.g. https://uat-cloudapi.estes-express.com (test) or https://cloudapi.estes-express.com (prod)
+#   ESTES_API_KEY              Estes Cloud API key (provisioned per-environment via POST /v1/api-key), sent as the `apikey` header on every call
+#   ESTES_USERNAME             Estes account username, Basic-auth'd against POST /authenticate for a per-session bearer token
+#   ESTES_PASSWORD             Estes account password, paired with ESTES_USERNAME for POST /authenticate
+#   ESTES_ACCOUNT_NUMBER       Wigwam's Estes account number, sent as payment.account on rate-quote requests (terms: Prepaid/Shipper)

@@ -1,0 +1,223 @@
+import type { Bindings } from "./types";
+
+// Real Wigwam Acumatica PO numbers observed during design (e.g. P000513) follow
+// a "P" + 6-digit zero-padded sequence format. Vendor-quoted references often
+// need cleanup before they match this exactly (FR-6.1a), so this only pulls the
+// pattern out of surrounding text rather than requiring an exact-string match.
+const PO_NUMBER_PATTERN = /P\d{6}/i;
+
+// No outbound fetch() here is allowed to hang indefinitely — a slow/wedged
+// Acumatica instance would otherwise tie up the Worker request until the
+// platform's own limit kills it.
+const FETCH_TIMEOUT_MS = 10_000;
+
+export function normalizePoNumber(rawText: string | null | undefined): string | null {
+  if (!rawText) return null;
+  const match = rawText.match(PO_NUMBER_PATTERN);
+  return match ? match[0].toUpperCase() : null;
+}
+
+export type MatchedPoLine = {
+  lineNbr: number;
+  inventoryId: string;
+  lineDescription: string;
+  orderQty: number;
+  uom: string;
+  // Needed for landed-cost calculation (FR-5.3 follow-on) — the material
+  // cost side of landed cost = extendedCost, tied to a shipment's freight
+  // charge via po_number_matched/po_line_id once confirmed.
+  unitCost: number;
+  extendedCost: number;
+  // FR-6.1e: so the review UI can show original/open/receiving-against-this
+  // qty side by side. receivedQty is Acumatica's QtyOnReceipts (received to
+  // date across all shipments against this line, not just this one);
+  // openQty is derived (orderQty - receivedQty, floored at 0) since
+  // Acumatica doesn't expose a dedicated "open qty" field.
+  receivedQty: number;
+  openQty: number;
+};
+
+export type MatchedPurchaseOrder = {
+  orderNbr: string;
+  vendorId: string;
+  vendorName: string;
+  status: string;
+  date: string | null;
+  promisedOn: string | null;
+  lines: MatchedPoLine[];
+};
+
+// Acumatica's contract-based REST API wraps every field as { value: ... }.
+// This is the standard shape across Acumatica versions (not something specific
+// to Wigwam's instance), so it's safe to rely on structurally.
+type AcumaticaField<T> = { value: T } | undefined;
+type AcumaticaPoResponse = {
+  OrderNbr?: AcumaticaField<string>;
+  Status?: AcumaticaField<string>;
+  Date?: AcumaticaField<string>;
+  PromisedOn?: AcumaticaField<string>;
+  VendorID?: AcumaticaField<string>;
+  Details?: {
+    LineNbr?: AcumaticaField<number>;
+    InventoryID?: AcumaticaField<string>;
+    LineDescription?: AcumaticaField<string>;
+    OrderQty?: AcumaticaField<number>;
+    UOM?: AcumaticaField<string>;
+    UnitCost?: AcumaticaField<number>;
+    ExtendedCost?: AcumaticaField<number>;
+    QtyOnReceipts?: AcumaticaField<number>;
+  }[];
+};
+
+// The PurchaseOrder entity's "VendorRef" field is a free-text vendor
+// reference number (confirmed blank on the real P000513 PO) — NOT the
+// vendor's name. The name only lives on the Vendor entity itself, so a
+// second lookup is required.
+type AcumaticaVendorResponse = {
+  VendorName?: AcumaticaField<string>;
+};
+
+let cachedToken: { value: string; expiresAt: number } | null = null;
+
+// Requires ACUMATICA_BASE_URL / ACUMATICA_CLIENT_ID / ACUMATICA_CLIENT_SECRET
+// / ACUMATICA_USERNAME / ACUMATICA_PASSWORD as Worker secrets, and
+// ACUMATICA_ENDPOINT_VERSION (a plain, non-secret var in wrangler.toml —
+// confirmed live against Wigwam's instance as "25.200.001"). See README.md
+// "Acumatica setup" section.
+//
+// This uses the Resource Owner Password Credentials grant (grant_type
+// "password"), not Client Credentials — confirmed 2026-07-28 against
+// Wigwam's live 2025R2 instance that Client Credentials isn't an available
+// Flow option on a Connected Application at all. Every Acumatica API call is
+// tied to a specific user's role/permissions, so there's no pure app-only
+// grant; ACUMATICA_USERNAME/PASSWORD should be a dedicated service-account
+// user scoped to read-only access on PurchaseOrder/Vendor, not a personal
+// login.
+async function getAccessToken(env: Bindings, forceRefresh = false): Promise<string> {
+  if (!forceRefresh && cachedToken && cachedToken.expiresAt > Date.now()) {
+    return cachedToken.value;
+  }
+
+  const response = await fetch(`${env.ACUMATICA_BASE_URL}/identity/connect/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "password",
+      client_id: env.ACUMATICA_CLIENT_ID,
+      client_secret: env.ACUMATICA_CLIENT_SECRET,
+      username: env.ACUMATICA_USERNAME,
+      password: env.ACUMATICA_PASSWORD,
+      scope: "api",
+    }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    // OAuth token endpoints return the actual reason (invalid_client,
+    // unsupported_grant_type, invalid_scope, etc.) in the response body per
+    // RFC 6749 — surfacing it here instead of just the status code is the
+    // difference between "400" and knowing what to actually fix.
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Acumatica auth failed: ${response.status}${detail ? ` — ${detail.slice(0, 300)}` : ""}`);
+  }
+
+  const body = (await response.json()) as { access_token: string; expires_in: number };
+  cachedToken = {
+    value: body.access_token,
+    expiresAt: Date.now() + Math.max(body.expires_in - 60, 30) * 1000,
+  };
+  return cachedToken.value;
+}
+
+async function lookupVendorName(env: Bindings, token: string, vendorId: string): Promise<string> {
+  if (!vendorId) return "";
+  const url = `${env.ACUMATICA_BASE_URL}/entity/Default/${env.ACUMATICA_ENDPOINT_VERSION}/Vendor/${encodeURIComponent(
+    vendorId
+  )}`;
+
+  const response = await fetch(url, {
+    headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+
+  if (!response.ok) return "";
+  const body = (await response.json()) as AcumaticaVendorResponse;
+  return body.VendorName?.value ?? "";
+}
+
+// PurchaseOrder's real primary key is Type + OrderNbr (Type e.g. "Normal",
+// "Drop-Ship", "Blanket" — confirmed against Wigwam's live data 2026-07-28,
+// P000513 has Type "Normal"). We only ever have OrderNbr (typed/extracted
+// from a supplier email, never the type), so a direct by-key GET
+// (/PurchaseOrder/{orderNbr}) throws a FillEntityImplWithKeys
+// InvalidOperationException — the endpoint expects two key segments, not
+// one. Querying the collection with $filter on OrderNbr alone works instead
+// (confirmed live against P000513) and doesn't require knowing Type.
+export async function lookupPurchaseOrder(
+  env: Bindings,
+  orderNbr: string
+): Promise<MatchedPurchaseOrder | null> {
+  const token = await getAccessToken(env);
+  const url = `${env.ACUMATICA_BASE_URL}/entity/Default/${env.ACUMATICA_ENDPOINT_VERSION}/PurchaseOrder?$filter=${encodeURIComponent(
+    `OrderNbr eq '${orderNbr}'`
+  )}&$expand=Details`;
+
+  const response = await fetch(url, {
+    headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    // Acumatica's contract-based API returns a JSON body (often with a
+    // "message"/"exceptionMessage") describing the actual server-side
+    // failure — e.g. an access-rights exception surfaces as a 500, not a
+    // clean 403. Surface it instead of just the status code.
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Acumatica PO lookup failed: ${response.status}${detail ? ` — ${detail.slice(0, 500)}` : ""}`);
+  }
+
+  // $filter on the collection endpoint returns a JSON array, not a single
+  // object — zero matches is a 200 with an empty array, not a 404.
+  const results = (await response.json()) as AcumaticaPoResponse[];
+  const body = results[0];
+  if (!body) return null;
+
+  const vendorId = body.VendorID?.value ?? "";
+  const vendorName = await lookupVendorName(env, token, vendorId);
+
+  return {
+    orderNbr: body.OrderNbr?.value ?? orderNbr,
+    vendorId,
+    vendorName,
+    status: body.Status?.value ?? "",
+    date: body.Date?.value ?? null,
+    promisedOn: body.PromisedOn?.value ?? null,
+    lines: (body.Details ?? []).map((line) => {
+      const orderQty = line.OrderQty?.value ?? 0;
+      const receivedQty = line.QtyOnReceipts?.value ?? 0;
+      return {
+        lineNbr: line.LineNbr?.value ?? 0,
+        inventoryId: line.InventoryID?.value ?? "",
+        lineDescription: line.LineDescription?.value ?? "",
+        orderQty,
+        uom: line.UOM?.value ?? "",
+        unitCost: line.UnitCost?.value ?? 0,
+        extendedCost: line.ExtendedCost?.value ?? 0,
+        receivedQty,
+        openQty: Math.max(orderQty - receivedQty, 0),
+      };
+    }),
+  };
+}
+
+// For the "Connections" test panel — verifies the OAuth handshake only
+// (not a real PO lookup), forcing a fresh token rather than reusing a
+// cached one so a stale success doesn't mask a since-broken credential.
+export async function testConnection(env: Bindings): Promise<{ ok: boolean; detail: string }> {
+  try {
+    await getAccessToken(env, true);
+    return { ok: true, detail: "Authenticated successfully" };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  }
+}

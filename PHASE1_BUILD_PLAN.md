@@ -1,0 +1,209 @@
+# Phase 1 Build Plan — Inbound Freight Tool
+
+**Status:** Draft v2
+**Last updated:** 2026-07-27
+**Depends on:** `REQUIREMENTS.md` (Phase 1 functional requirements, FR-1.x through FR-5.x, plus FR-6.1 pulled forward from Phase 3)
+
+This document scopes the actual Phase 1 build: architecture, data model, component breakdown, and implementation order. It does not cover Phase 2 (live carrier APIs) or Phase 3 (Acumatica) beyond making sure Phase 1 doesn't block them.
+
+---
+
+## 1. Architecture
+
+**Confirmed:** Cloudflare Workers + D1.
+
+- A single Cloudflare Worker serves both the frontend (static assets) and the backend API routes — no separate server to manage.
+- **D1** (SQL) is the persistence layer: shipments, rate quotes, booking decisions, freight-class config, and user accounts all live there. This replaces the current proof-of-concept's in-browser-only state (required by FR-5.2).
+- The **Anthropic API key moves server-side**, called from Worker code with the key stored as a Worker secret. The current proof-of-concept widget calls the Claude API directly from the browser, which would expose the key — that pattern is not carried into Phase 1.
+- Carrier rate calculation (dimensional weight, freight class multiplier, zone table) runs as plain Worker logic, ported from the existing `inbound-routing` skill's JS — no external calls yet, since this is still the simulated/estimated rate phase.
+
+```
+Browser (shipping manager) ──HTTPS──> Cloudflare Worker
+                                         ├─ static frontend (queue UI, results, config, login)
+                                         ├─ /api/* routes (auth, shipments, rating, config, metrics)
+                                         ├─ Anthropic API call (server-side, key as Worker secret)
+                                         └─ D1 database (users, shipments, quotes, config, sessions)
+```
+
+## 2. Access & Auth
+
+Phase 1 needs to support the shipping manager plus a small number of other staff (confirmed), not just one user. Proposed approach, simple by design since this is a handful of known internal users:
+
+- Accounts are created manually in D1 by IT/Systems Admin (no self-service signup).
+- Username + password login; passwords hashed (e.g. via Workers-compatible bcrypt/argon2 library or Web Crypto PBKDF2) — never stored in plaintext.
+- Session identified by a signed, HTTP-only cookie; session record (or a signed token) validated on each API request.
+- No role differentiation planned for Phase 1 (all logged-in users can do everything) — revisit if Purchasing/AP need view-only access later.
+
+*(Flagged as an assumption to confirm with IT before build: is there an existing internal auth pattern for other Wigwam internal tools — e.g. Cloudflare Access / Zero Trust — that this should follow instead of a bespoke login?)*
+
+## 3. Data Model (D1 schema, initial)
+
+**`users`**
+| column | type | notes |
+|---|---|---|
+| id | integer PK | |
+| name | text | |
+| email | text unique | |
+| password_hash | text | |
+| created_at | text (ISO) | |
+
+**`freight_class_defaults`** (FR-2.2 — owned by this tool)
+| column | type | notes |
+|---|---|---|
+| material | text PK | e.g. "wool yarn" |
+| freight_class | real | e.g. 60 |
+| updated_by | integer FK → users | |
+| updated_at | text | |
+
+**`shipments`**
+| column | type | notes |
+|---|---|---|
+| id | integer PK | |
+| status | text | queued / extracting / rated / booked / needs_review |
+| raw_input | text | pasted email or PDF text, as submitted |
+| material | text | |
+| freight_class | real | |
+| weight_lbs | real | |
+| pieces | integer | |
+| length_in / width_in / height_in | real | |
+| hazmat | integer (bool) | |
+| origin_address | text | |
+| destination_address | text | default Sheboygan, editable per FR-1.5 |
+| ready_date | text | |
+| extraction_method | text | "ai" or "regex_fallback" |
+| extraction_flagged_fields | text (JSON) | fields the extractor couldn't confidently fill |
+| created_by | integer FK → users | |
+| created_at | text | |
+
+**`carrier_quotes`**
+| column | type | notes |
+|---|---|---|
+| id | integer PK | |
+| shipment_id | integer FK → shipments | |
+| carrier | text | |
+| price | real | |
+| transit_estimate | text (nullable) | |
+| is_best | integer (bool) | |
+| created_at | text | |
+
+**`booking_decisions`**
+| column | type | notes |
+|---|---|---|
+| id | integer PK | |
+| shipment_id | integer FK → shipments | |
+| chosen_quote_id | integer FK → carrier_quotes | |
+| booked_by | integer FK → users | |
+| booked_at | text | |
+| exported | integer (bool) | whether a quote/confirmation was exported |
+
+**Update (2026-07-27): pulled forward from Phase 3.** `po_number_raw`, `po_number_matched`, `po_line_id`, `po_reconciliation_status`, and `po_match_data` (JSON snapshot of the matched Acumatica PO/line, added beyond the original plan so the review UI doesn't need a live Acumatica call per render) were added to `shipments` in migration `0003_po_matching.sql` and are live in the build (see `src/acumatica.ts`, FR-6.1). `po_reconciliation_status` values: `not_applicable` (default), `pending_review`, `confirmed`, `unmatched`.
+
+Real Acumatica data pulled during design (sample PO `P000513`, vendor North Carolina Spinning Mills Inc):
+- PO numbers are `P` + 6-digit zero-padded sequence (`normalizePoNumber()` in `src/acumatica.ts` extracts this pattern from free text per FR-6.1a).
+- `VendorClass = "YARN"` reliably distinguishes raw-material yarn vendors from other vendor types (e.g. `MACHPART`) — not used in the matching code itself (matching is PO-number-driven, not vendor-driven, per FR-6.1) but useful context for anyone validating matches.
+- Real yarn inventory items are specific construction/blend/color codes (e.g. `Y5750-057` = "20/1 50Cot/50Poly 057 Charcoal"), not generic Wool/Synthetic/Cotton buckets — confirms material should come from the matched PO line, not the AI's guess from email text, once a match is confirmed.
+- Freight class (NMFC) is not tracked anywhere in Acumatica — reconfirms FR-2.2 (freight-class defaults stay owned by this tool).
+
+Acumatica write-back (FR-6.2) is still Phase 3 — this build only reads PO/vendor/item data for matching.
+
+**`locks`** (added 2026-07-27, migration `0004_locks.sql`)
+| column | type | notes |
+|---|---|---|
+| name | text PK | e.g. `batch_operations` |
+| acquired_at | text | |
+| acquired_by | integer FK → users | |
+
+Serializes `rate-batch` (see `src/locks.ts`) since concurrent rate calls read/write overlapping shipment and quote rows and would otherwise race if two users triggered them at the same time. `book-all`/`export-all` were removed 2026-07-28 (see milestone 4's 2026-07-28 update) — booking and export are now per-shipment only, so this lock's only remaining caller is `rate-batch`. A stuck row (holder crashed before release) is cleared via `POST /api/admin/reset-lock`, a token-gated endpoint — see section 4 and `README.md` "Clearing a stuck batch-operations lock". This is the escape hatch called for in the Operability NFR (REQUIREMENTS.md section 9): no lock should ever require a redeploy to clear.
+
+**Update (2026-07-27): FR-5.3 actuals + landed cost.** `shipments` gained `actual_carrier`, `actual_charge`, `actual_mode`, `actual_transit_days` (migration `0005_actuals_and_settings.sql`) — captured inline via the existing PATCH-based field-edit UI, same pattern as extracted fields, no new entry screen. The same migration adds a singleton `settings` table:
+
+**`settings`**
+| column | type | notes |
+|---|---|---|
+| id | integer PK (CHECK id=1) | singleton row |
+| charge_variance_threshold_pct | real | default 5; shipping-manager-configurable via `/api/config/settings` (FR-5.3b) — deliberately not hardcoded |
+| updated_by | integer FK → users | |
+| updated_at | text | |
+
+Landed cost (FR-6.6) needed one addition to the Acumatica client: `MatchedPoLine` (`src/acumatica.ts`) now also captures `unitCost`/`extendedCost` off each PO line (previously omitted — the real `P000513` PO fetched during design had `UnitCost: 5.68`, `ExtendedCost: 17040`, but the mapping only pulled `inventoryId`/`lineDescription`/`orderQty`/`uom`). Since `po_match_data` already persists the full matched-PO snapshot per shipment, this cost data is available for landed-cost calculation with no extra Acumatica call.
+
+**Update (2026-07-28): live-verified against the real Acumatica instance.** Using the read-only Acumatica MCP connection available in this environment (separate from the Worker's own OAuth client, which is still unprovisioned), confirmed two things directly against Wigwam's instance rather than assuming them:
+- The contract-based endpoint version is `25.200.001` (from the entity response's `_links.self` path), consistent with the 2025R2 instance. This is not sensitive, so it moved from a `wrangler secret` to a plain `[vars]` entry in `wrangler.toml` — one less setup step for IT.
+- The PurchaseOrder entity's `VendorRef` field (previously used as `vendorName` in `lookupPurchaseOrder()`) is a free-text vendor-reference field, confirmed blank on the real P000513 PO — not the vendor's name. `vendorName` is now resolved with a second call to the `Vendor` entity by `VendorID` (`VendorName` field, e.g. "NORTH CAROLINA SPINNING MILLS INC" for vendor `1826`). Fixed in `src/acumatica.ts` before this ever ran against production data.
+
+**Update (2026-07-28): carrier confirmation + Bill of Lading (FR-4.5/4.6).** `booking_decisions` gained `carrier_confirmation_nbr`, `confirmed_by`, `confirmed_at` (migration `0006_carrier_confirmation.sql`). No live carrier booking API exists yet, so "confirming with the carrier" is still a manual phone/email step — the tool only records the confirmation/PRO number the carrier gives back, via `POST /api/shipments/:id/confirm-carrier`. A generated Bill of Lading (`GET /api/shipments/:id/bol`, plain text, same download pattern as the existing quote export) is available as soon as a shipment is booked, pulling shipper/vendor name from `po_match_data` when the PO has been matched (FR-6.1), and printing the confirmation number once entered (or "Pending confirmation" before then).
+
+## 4. API Routes (Worker)
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/api/login` | POST | Authenticate, set session cookie |
+| `/api/logout` | POST | Clear session |
+| `/api/shipments` | POST | Create a shipment from pasted text/PDF; triggers AI extraction (FR-1.1–1.4) |
+| `/api/shipments` | GET | List/history, with filters (status, date range) (FR-5.2) |
+| `/api/shipments/:id` | PATCH | Manual correction of extracted fields (FR-1.4) |
+| `/api/shipments/rate-batch` | POST | Run rate calculation concurrently for the given shipment IDs — one at a time from the "Rate this shipment" button (FR-3.1–3.2) |
+| `/api/shipments/:id/book` | POST | Record chosen carrier/rate as booked (FR-4.1) |
+| `/api/shipments/:id/export` | GET | Export quote/confirmation (FR-4.2) |
+| `/api/config/freight-classes` | GET/PUT | View/edit freight-class default table (FR-2.2) |
+| `/api/metrics` | GET | Processed count, total booked cost, savings vs. highest quote (FR-5.1) |
+| `/api/shipments/:id/po-lookup` | POST | Look up a (typed or extracted) PO number against Acumatica; stores a pending match for review (FR-6.1, FR-6.1a) |
+| `/api/shipments/:id/po-confirm` | POST | Shipping manager confirms a specific matched PO line; pulls that line's material into the shipment (FR-6.1b) |
+| `/api/shipments/:id/po-flag-unmatched` | POST | Proceed unlinked, flag for Shipping/Purchasing reconciliation (FR-6.1d) |
+| `/api/admin/reset-lock` | POST | Clear a stuck `locks` row (all, or one by `lockName`); gated by the `x-admin-token` header matching `ADMIN_RESET_TOKEN`, not session auth |
+| `/api/config/settings` | GET/PUT | View/edit the charge-variance threshold percentage (FR-5.3b) |
+| `/api/landed-cost` | GET | Landed cost aggregated per matched PO line: material cost + freight-to-date, finalized once qty shipped ≥ ordered and every linked shipment has an actual charge (FR-6.6) |
+| `/api/shipments/:id/confirm-carrier` | POST | Record the carrier's confirmation/PRO number for the most recent booking decision (FR-4.5) — manual step, no live carrier API call |
+| `/api/shipments/:id/bol` | GET | Generate and download a Bill of Lading for a booked shipment, for the shipping manager to send to the vendor (FR-4.6) |
+
+## 5. Frontend Components
+
+- **Login page** — simple username/password form.
+- **Destination bar** — persistent, pre-filled Sheboygan address, editable (FR-1.5), carried over from the PoC.
+- **Shipment queue** — add via paste/upload, sample material buttons, per-shipment status (Queued → Extracting → Rated → Booked), matches PoC UX (FR-1.6).
+- **Extraction review panel** — shows extracted fields per shipment with inline correction before rating (FR-1.4), flags any fields the AI/regex couldn't fill.
+- **Rate results view** — sorted carrier list, best-rate highlight, book/export actions per shipment and batch-wide (FR-3.4, FR-4.x), ported visually from the PoC.
+- **Freight-class config page** — simple editable table for FR-2.2, restricted to logged-in users (no separate admin role in Phase 1).
+- **Metrics/history dashboard** — batch metrics plus a parallel-run comparison view (tool estimate vs. manual-process actual) so the shipping manager can judge readiness to exit the parallel run (FR-5.3, section 5.1 of REQUIREMENTS.md).
+
+## 6. Milestones
+
+1. ✅ **Foundation** — D1 schema + migrations, Worker skeleton, login/session, deploy pipeline. Deployed to `https://inbound-freight-tool.cchesebro.workers.dev`.
+2. ✅ **Intake & extraction** — paste/upload → server-side Claude API extraction (Haiku 4.5) → regex fallback → correction UI (FR-1.x). Correction UI is inline edit/save on each shipment card.
+3. ✅ **Freight class config + rate engine** — rate engine (zone map, freight-class multiplier, dimensional weight) is done and running (FR-3.x). Config page UI for FR-2.2 is built: a "Freight classes" panel (toggle button in the batch-actions bar) listing the table with inline edit + an add/update row, backed by the existing `/api/config/freight-classes` API. **Update (2026-07-28):** the "Rate all queued" batch button was replaced with a "Rate this shipment" button on each queued card, plus a "Re-Rate Shipment" button once a shipment is already rated — both call the same `/api/shipments/rate-batch` endpoint with a single-element `shipmentIds` array. Re-rating required a correctness fix: `rate-batch` now deletes a shipment's existing `carrier_quotes` rows before inserting fresh ones (previously only ever called once per shipment, so the lack of cleanup was latent but harmless); booked shipments are explicitly skipped so re-rating can never orphan a `booking_decisions.chosen_quote_id` reference.
+4. ✅ **Booking, export** — book/export per shipment (FR-4.x): quote table with best-rate highlight, per-shipment Book/Export. FR-4.5/4.6 (2026-07-28) added a post-booking "carrier confirmation" panel (records the manually-obtained PRO/confirmation number) and a generated Bill of Lading download, available once a shipment is booked. **Update (2026-07-28):** removed the batch-wide "Book all best rates"/"Export all quotes" buttons and their `/api/shipments/book-all`/`/export-all` routes — booking and export are per-shipment only now, matching the same per-shipment pattern rating already moved to (see milestone 3's 2026-07-28 update).
+5. ✅ **Reporting** — a "Metrics" panel (toggle button next to Freight classes) is built: stat tiles (shipments processed, total booked cost, savings vs. highest quote per FR-5.1) plus a compact history table (id/material/status/carrier/rate/added) sourced from the same shipment list already loaded for the queue (FR-5.2). FR-5.3 is now built: actual-outcome fields (carrier/charge/mode/transit days) editable inline on each shipment card, a charge-variance badge against the booked/best quote using a shipping-manager-configurable threshold (FR-5.3b), and a "Landed cost by PO line" table aggregating material cost + freight-to-date per matched Acumatica PO line (FR-6.6, pulled forward alongside this since it builds directly on FR-6.1's PO/line matching). Still open: the actual LTL-vs-Truckload threshold used to validate/eventually auto-decide `actual_mode` (see section 8).
+6. **Multi-user rollout** — add remaining users' accounts, confirm auth approach with IT, begin the Phase 1 parallel run.
+7. ⏳ **PO matching (pulled forward from Phase 3, FR-6.1)** — code complete (`src/acumatica.ts`, PO-related routes, UI lookup/confirm/flag panel). **Update (2026-07-28):** the OAuth grant assumed here was wrong — Client Credentials isn't an available Flow option on Wigwam's Connected Applications screen at all (every Acumatica API call is tied to a user's role/permissions, so there's no pure app-only grant). Switched to **Resource Owner Password Credentials** (`grant_type=password`); `src/acumatica.ts` now sends `username`/`password` alongside `client_id`/`client_secret`. Two new secrets needed: `ACUMATICA_USERNAME`/`ACUMATICA_PASSWORD` (a dedicated service-account user, not a personal login), in addition to `ACUMATICA_BASE_URL`, `ACUMATICA_CLIENT_ID`, `ACUMATICA_CLIENT_SECRET` — see `README.md` "Acumatica setup". `ACUMATICA_ENDPOINT_VERSION` remains confirmed and non-secret (section 3). Acumatica write-back (FR-6.2) remains out of scope until Phase 3.
+8. ✅ **Operational hardening** — batch-operations lock (`src/locks.ts`, migration `0004_locks.sql`) serializing `rate-batch` (originally also `book-all`/`export-all`, removed 2026-07-28 — see milestone 4), with a token-gated `/api/admin/reset-lock` escape hatch; explicit timeouts added to every outbound `fetch()` (Anthropic in `src/extraction.ts`, Acumatica in `src/acumatica.ts`). Satisfies the Operability/Reliability NFRs added to REQUIREMENTS.md section 9.
+
+## 7. Explicitly Out of Scope for Phase 1
+
+- Live carrier rating/booking APIs (Phase 2).
+- Acumatica write-back (FR-6.2, still Phase 3) — PO/vendor/item **read** access for matching (FR-6.1) was pulled forward; see milestone 7.
+- Role-based permissions beyond a single access level.
+
+## 8. Open Items
+
+- Confirm whether Wigwam already has a standard auth pattern for internal Cloudflare-hosted tools (e.g. Cloudflare Access) that should replace the bespoke username/password login proposed in section 2.
+- Confirm the initial list of users who need Phase 1 access beyond the shipping manager.
+- Confirm Worker/D1 naming and which Cloudflare account/environment this should deploy under.
+- **Phase 2 (Estes Express) groundwork, 2026-07-27:** reviewed the full Estes Cloud API OpenAPI spec (v1.26.30) ahead of getting real account access. Key findings, not yet built: auth needs both a provisioned `apikey` header (one-time via `POST /v1/api-key`, Basic auth) and a per-session bearer JWT (`POST /authenticate`, Basic auth); `POST /v1/rate-quotes` maps directly onto our shipment fields (weight/dims/class/hazmat/origin/destination) and returns `totalCharges`/`transitDays`; booking is two separate calls — `POST /v1/bol` tenders the shipment for a PRO number, then `POST /v1/pickup-requests` schedules the actual truck; `GET /v1/shipments/history` supports lookup by PRO **or by PO number**, which could reuse the same PO number captured for Acumatica matching (FR-6.1). Open questions before writing code: Wigwam's Estes account number, payor/terms convention (prepaid/collect, shipper/consignee/third-party), and whether handling-unit type needs a new shipment field. Each additional Phase 2 carrier (SAIA, Old Dominion, R+L) will need the same spec-review exercise once their docs are available.
+- **Update (2026-07-28): Estes rate quotes live.** Real account credentials now exist. Open questions above are resolved: account number provisioned; terms are Prepaid/Shipper (Wigwam's confirmed convention for inbound freight); handling-unit type isn't a real shipment field yet, so `src/estes.ts` defaults every request to `PT` (pallet) rather than adding one speculatively. `getEstesRateQuote()` (`src/estes.ts`) authenticates (caching the bearer token, re-authenticating on a 401) and calls `POST /v1/rate-quotes`; `rate-batch` (`src/index.ts`) swaps the live quote in for the simulated Estes Express estimate and falls back to the simulated one if the call fails, so one carrier's outage never fails the batch for every shipment. Booking (`POST /v1/bol` + `POST /v1/pickup-requests`) is still not built — those are live, hard-to-reverse actions (tendering a real shipment, scheduling a real truck) that need explicit sign-off before wiring up, separate from read-only rate quoting.
+- **Correction (2026-07-28): Estes has separate UAT and production hosts.** The swagger.yaml spec review claimed a single base URL with no sandbox split — Estes' actual onboarding email contradicts that, referencing `uat-cloudapi.estes-express.com` (test) distinct from `cloudapi.estes-express.com` (prod). `ESTES_BASE_URL` is now a Worker secret (`src/estes.ts` no longer hardcodes it), same pattern as `ACUMATICA_BASE_URL`. The email also confirmed the `apiKey` provisioning flow precisely: `POST {base}/v1/api-key` with a Client ID/Secret as Basic auth (one-time per environment) returns the `apiKey` plus a rotated Client Secret for any future re-provisioning call — the Client ID/Secret are never needed for actual rate-quote calls afterward, only `apiKey`. See `README.md` "Estes Express setup".
+- **Correction (2026-07-29): `/authenticate` also requires the `apikey` header.** The earlier spec-review notes assumed `apikey` was only needed on operational endpoints (rate-quotes, etc.) after getting the bearer token — live testing via the new Connections panel showed `/authenticate` itself rejects with `401 "No API key found in request"` without it. `src/estes.ts`'s `authenticate()` now sends `apikey` alongside the Basic-auth header on that call too.
+- **LTL vs. Truckload threshold:** The manual process decided mode via a simple, calculable rule (per the shipping manager), but the exact cutoff (weight, pallet count, or otherwise) hasn't been confirmed. `actual_mode` (FR-5.3a) is currently freeform-recorded only; `src/rating.ts` doesn't branch on mode at all yet.
+
+## 9. Status
+
+- D1 database provisioned (`inbound-freight-tool-db`) and migrations 0001/0002 applied in the Wigwam Cloudflare account.
+- `ANTHROPIC_API_KEY` and `SESSION_SECRET` set as Worker secrets — extraction (FR-1.1/1.2) runs against Claude Haiku 4.5.
+- Deployed and live at `https://inbound-freight-tool.cchesebro.workers.dev`. First user created; login confirmed working.
+- End-to-end loop confirmed working: intake → AI extraction → inline correction → per-shipment rate shopping → per-shipment booking → per-shipment quote export.
+- Freight-class config page UI (FR-2.2) is now built (see milestone 3).
+- Metrics/history dashboard UI (FR-5.1/5.2/5.3) is now built (see milestone 5): stat tiles, compact history table, actual-outcome fields + charge-variance badge, and a landed-cost-by-PO-line table (FR-6.6), behind a "Metrics" toggle and inline shipment-card fields. Migration `0005_actuals_and_settings.sql` added the `actual_*` shipment columns and the `settings` table. Still open: the LTL-vs-Truckload threshold (section 8).
+- PO matching (FR-6.1) pulled forward from Phase 3: migration `0003_po_matching.sql` and PO-lookup/confirm/flag routes + UI are built (see milestone 7). `ACUMATICA_ENDPOINT_VERSION` is confirmed (`25.200.001`) and set directly in `wrangler.toml` as of 2026-07-28 — no longer a setup blocker. The OAuth grant is now Resource Owner Password Credentials (see the 2026-07-28 update in milestone 7) — needs `ACUMATICA_BASE_URL`, `ACUMATICA_CLIENT_ID`, `ACUMATICA_CLIENT_SECRET`, `ACUMATICA_USERNAME`, `ACUMATICA_PASSWORD` as Worker secrets.
+- The remote D1 database was found out of sync with the migration files on 2026-07-28 — only `0001_init.sql`/`0002_seed_freight_classes.sql` had ever actually been applied (schema created by hand at some point, outside Wrangler's own tracking), even though the code assumed `0003`–`0006` were live too. Backfilled Wrangler's `d1_migrations` tracking table for 0001/0002 and applied 0003–0006 for real; the remote schema now matches the code. Worth checking `npx wrangler d1 execute inbound-freight-tool-db --remote --command "SELECT name FROM sqlite_master WHERE type='table'"` after any future migration file is added, rather than assuming `db:migrate:remote` was ever run.
+- Operational hardening (see milestone 8) is live: migration `0004_locks.sql`, `src/locks.ts`, `/api/admin/reset-lock`, and outbound-fetch timeouts. Requires `ADMIN_RESET_TOKEN` as a new Worker secret (see `README.md` "Clearing a stuck batch-operations lock") before the reset endpoint can be used — flagged as a setup item, though its absence only blocks the reset endpoint, not normal app operation.
+- Carrier confirmation + Bill of Lading (FR-4.5/4.6) are live (see milestone 4): migration `0006_carrier_confirmation.sql`, `/api/shipments/:id/confirm-carrier`, `/api/shipments/:id/bol`, and the booked-shipment card panel. No new secrets or setup items — this doesn't depend on any carrier API access.
+- Estes Express live rate quotes (FR-3.3) are code-complete (`src/estes.ts`, wired into `/api/shipments/rate-batch` in `src/index.ts`) and being set up live as of 2026-07-28 — five `ESTES_*` secrets (`ESTES_BASE_URL`, `ESTES_API_KEY`, `ESTES_USERNAME`, `ESTES_PASSWORD`, `ESTES_ACCOUNT_NUMBER` — see `README.md` "Estes Express setup"). Until all five are set, `rate-batch` transparently falls back to the simulated Estes Express estimate (no LIVE badge). Booking (BOL/pickup-requests) remains out of scope — see the 2026-07-28 update in section 8.
