@@ -320,6 +320,7 @@ app.post("/api/shipments/rate-batch", async (c) => {
           // aren't configured yet or the API call fails.
           let quotes = simulatedQuotes;
           let estesTransitDays: number | null = null;
+          let estesIsLive = false;
           try {
             const liveEstesQuote = await getEstesRateQuote(c.env, {
               weightLbs: Number(shipment.weight_lbs) || 0,
@@ -338,20 +339,19 @@ app.post("/api/shipments/rate-batch", async (c) => {
                 .concat([{ carrier: "Estes Express", price: liveEstesQuote.totalCharges }])
                 .sort((a, b) => a.price - b.price);
               estesTransitDays = liveEstesQuote.transitDays;
+              estesIsLive = true;
             }
           } catch (err) {
             console.error("Estes live rate quote failed, using simulated estimate", err);
           }
 
           for (const [index, quote] of quotes.entries()) {
-            const transitEstimate =
-              quote.carrier === "Estes Express" && estesTransitDays != null
-                ? String(estesTransitDays)
-                : null;
+            const isEstes = quote.carrier === "Estes Express";
+            const transitEstimate = isEstes && estesTransitDays != null ? String(estesTransitDays) : null;
             await c.env.DB.prepare(
-              "INSERT INTO carrier_quotes (shipment_id, carrier, price, transit_estimate, is_best) VALUES (?, ?, ?, ?, ?)"
+              "INSERT INTO carrier_quotes (shipment_id, carrier, price, transit_estimate, is_best, is_live) VALUES (?, ?, ?, ?, ?, ?)"
             )
-              .bind(id, quote.carrier, quote.price, transitEstimate, index === 0 ? 1 : 0)
+              .bind(id, quote.carrier, quote.price, transitEstimate, index === 0 ? 1 : 0, isEstes && estesIsLive ? 1 : 0)
               .run();
           }
 
