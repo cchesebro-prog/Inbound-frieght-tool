@@ -76,7 +76,8 @@ async function authenticate(env: Bindings): Promise<string> {
   });
 
   if (!response.ok) {
-    throw new Error(`Estes authenticate failed: ${response.status}`);
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Estes authenticate failed: ${response.status}${detail ? ` — ${detail.slice(0, 300)}` : ""}`);
   }
 
   const body = (await response.json()) as { token: string };
