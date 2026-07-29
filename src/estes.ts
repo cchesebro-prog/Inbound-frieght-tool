@@ -170,14 +170,17 @@ async function callRateQuotes(
 
 // Requires ESTES_API_KEY / ESTES_USERNAME / ESTES_PASSWORD /
 // ESTES_ACCOUNT_NUMBER as Worker secrets (see README.md "Estes Express
-// setup"). Fails clearly (throws) rather than silently returning a fake
-// quote if any of these are missing or the API call fails — the caller (see
-// the rate-batch route in src/index.ts) decides whether to fall back to the
-// simulated estimate rather than failing the whole batch.
+// setup"). Always throws rather than silently returning a fake or empty
+// result — a 200 with no usable rate (rateFound: false, or a missing
+// totalCharges) is just as much a "why didn't this work" case as an HTTP
+// error, so it's surfaced the same way. The caller (see the rate-batch
+// route in src/index.ts) decides whether to fall back to the simulated
+// estimate and persists the message for later inspection rather than
+// requiring `wrangler tail` to have been running at the time.
 export async function getEstesRateQuote(
   env: Bindings,
   shipment: EstesShipmentInput
-): Promise<EstesRateQuote | null> {
+): Promise<EstesRateQuote> {
   let token = await getToken(env);
   let response = await callRateQuotes(env, token, shipment);
 
@@ -194,12 +197,7 @@ export async function getEstesRateQuote(
   const body = (await response.json()) as EstesRateQuotesResponse;
   const quote = body[0];
   if (!quote || quote.rateFound === false || !quote.quoteRate?.totalCharges) {
-    // A 200 with no usable rate is silent from the caller's point of view
-    // (falls back to the simulated estimate, no thrown error) — log the raw
-    // response so this doesn't look identical to a real success in
-    // wrangler tail.
-    console.error("Estes rate-quotes returned no usable rate", JSON.stringify(body).slice(0, 500));
-    return null;
+    throw new Error(`Estes rate-quotes returned no usable rate: ${JSON.stringify(body).slice(0, 400)}`);
   }
 
   return {

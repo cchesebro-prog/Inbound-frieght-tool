@@ -521,6 +521,7 @@ Regards, Delta Cotton Yarn LLC`,
           `).join('')}
         </tbody>
       </table>
+      ${shipment.estes_last_error ? `<p style="font-size:0.75rem; color:#b3261e; margin:0.25rem 0 0;">Estes Express fell back to a simulated estimate: ${escapeHtml(shipment.estes_last_error)}</p>` : ''}
     `;
 
     const canExport = shipment.status === 'rated' || shipment.status === 'booked';

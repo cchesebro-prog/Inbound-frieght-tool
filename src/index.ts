@@ -326,6 +326,7 @@ app.post("/api/shipments/rate-batch", async (c) => {
           let quotes = simulatedQuotes;
           let estesTransitDays: number | null = null;
           let estesIsLive = false;
+          let estesLastError: string | null = null;
           try {
             const liveEstesQuote = await getEstesRateQuote(c.env, {
               weightLbs: Number(shipment.weight_lbs) || 0,
@@ -338,17 +339,22 @@ app.post("/api/shipments/rate-batch", async (c) => {
               originAddress: String(shipment.origin_address ?? ""),
               destinationAddress: String(shipment.destination_address ?? ""),
             });
-            if (liveEstesQuote) {
-              quotes = simulatedQuotes
-                .filter((q) => q.carrier !== "Estes Express")
-                .concat([{ carrier: "Estes Express", price: liveEstesQuote.totalCharges }])
-                .sort((a, b) => a.price - b.price);
-              estesTransitDays = liveEstesQuote.transitDays;
-              estesIsLive = true;
-            }
+            quotes = simulatedQuotes
+              .filter((q) => q.carrier !== "Estes Express")
+              .concat([{ carrier: "Estes Express", price: liveEstesQuote.totalCharges }])
+              .sort((a, b) => a.price - b.price);
+            estesTransitDays = liveEstesQuote.transitDays;
+            estesIsLive = true;
           } catch (err) {
+            // Persisted below rather than only console.error'd, so this is
+            // inspectable afterward without wrangler tail having been
+            // running at the exact moment of the request.
+            estesLastError = (err as Error).message;
             console.error("Estes live rate quote failed, using simulated estimate", err);
           }
+          await c.env.DB.prepare("UPDATE shipments SET estes_last_error = ? WHERE id = ?")
+            .bind(estesLastError, id)
+            .run();
 
           // Re-rating (see "Re-Rate Shipment") would otherwise leave the
           // previous call's rows in place alongside the new ones — clear
