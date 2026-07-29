@@ -61,15 +61,19 @@ function parseAddress(raw: string): EstesAddress {
 let cachedToken: string | null = null;
 
 // POST /authenticate (Basic auth with the Estes account username/password)
-// returns a bearer JWT. The spec states no expiry, so this only
-// re-authenticates on a 401 from a downstream call rather than tracking a
-// TTL (see getEstesRateQuote).
+// returns a bearer JWT. Confirmed live 2026-07-29: this endpoint also
+// requires the apikey header (rejects with "No API key found in request"
+// otherwise) — it's not just the operational endpoints after it, as the
+// earlier spec-review notes assumed. The spec states no expiry, so this
+// only re-authenticates on a 401 from a downstream call rather than
+// tracking a TTL (see getEstesRateQuote).
 async function authenticate(env: Bindings): Promise<string> {
   const credentials = btoa(`${env.ESTES_USERNAME}:${env.ESTES_PASSWORD}`);
   const response = await fetch(`${env.ESTES_BASE_URL}/authenticate`, {
     method: "POST",
     headers: {
       authorization: `Basic ${credentials}`,
+      apikey: env.ESTES_API_KEY,
       accept: "application/json",
     },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
