@@ -194,6 +194,11 @@ export async function getEstesRateQuote(
   const body = (await response.json()) as EstesRateQuotesResponse;
   const quote = body[0];
   if (!quote || quote.rateFound === false || !quote.quoteRate?.totalCharges) {
+    // A 200 with no usable rate is silent from the caller's point of view
+    // (falls back to the simulated estimate, no thrown error) — log the raw
+    // response so this doesn't look identical to a real success in
+    // wrangler tail.
+    console.error("Estes rate-quotes returned no usable rate", JSON.stringify(body).slice(0, 500));
     return null;
   }
 
