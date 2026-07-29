@@ -90,7 +90,6 @@
   <button id="add-shipment-btn">Add shipment</button>
 
   <div class="batch-actions">
-    <button class="secondary" id="rate-all-btn">Rate all queued</button>
     <button class="secondary" id="book-all-btn">Book all best rates</button>
     <button class="secondary" id="export-all-btn">Export all quotes</button>
     <button class="secondary" id="toggle-freight-classes-btn" style="margin-left:auto;">Freight classes</button>
@@ -250,17 +249,6 @@ Regards, Delta Cotton Yarn LLC`,
     if (!rawInput.trim()) return;
     await api('/api/shipments', { method: 'POST', body: JSON.stringify({ rawInput }) });
     document.getElementById('raw-input').value = '';
-    loadShipments();
-  });
-
-  document.getElementById('rate-all-btn').addEventListener('click', async () => {
-    const shipments = await api('/api/shipments');
-    const queuedIds = shipments.filter((s) => s.status === 'queued').map((s) => s.id);
-    if (queuedIds.length === 0) return;
-    await api('/api/shipments/rate-batch', {
-      method: 'POST',
-      body: JSON.stringify({ shipmentIds: queuedIds }),
-    });
     loadShipments();
   });
 
@@ -548,6 +536,7 @@ Regards, Delta Cotton Yarn LLC`,
         <div class="card-actions">
           <button class="secondary small edit-toggle-btn" data-shipment="${shipment.id}">Edit</button>
           <button class="secondary small save-btn" data-shipment="${shipment.id}" style="display:none;">Save</button>
+          ${shipment.status === 'queued' ? `<button class="secondary small rate-shipment-btn" data-shipment="${shipment.id}">Rate this shipment</button>` : ''}
           <button class="secondary small lookup-po-btn" data-shipment="${shipment.id}">Look up PO</button>
           ${canExport ? `<a class="btn-link" href="/api/shipments/${shipment.id}/export">Export</a>` : ''}
           <button class="secondary small delete-shipment-btn" data-shipment="${shipment.id}" style="margin-left:auto; color:#b3261e; border-color:#b3261e;">Delete</button>
@@ -568,11 +557,19 @@ Regards, Delta Cotton Yarn LLC`,
     const flagPoBtn = e.target.closest('.flag-po-btn');
     const confirmCarrierBtn = e.target.closest('.confirm-carrier-btn');
     const deleteBtn = e.target.closest('.delete-shipment-btn');
+    const rateBtn = e.target.closest('.rate-shipment-btn');
 
     if (deleteBtn) {
       const id = deleteBtn.dataset.shipment;
       if (!confirm(`Delete shipment #${id}? This cannot be undone.`)) return;
       await api(`/api/shipments/${id}`, { method: 'DELETE' });
+      loadShipments();
+    } else if (rateBtn) {
+      const id = rateBtn.dataset.shipment;
+      await api('/api/shipments/rate-batch', {
+        method: 'POST',
+        body: JSON.stringify({ shipmentIds: [Number(id)] }),
+      });
       loadShipments();
     } else if (lookupPoBtn) {
       const id = lookupPoBtn.dataset.shipment;

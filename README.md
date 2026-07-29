@@ -116,7 +116,7 @@ This clears all locks (or pass `{"lockName": "batch_operations"}` as the body to
 
 ## What's built
 
-- Login, shipment intake (paste or sample-email buttons), AI extraction with inline correction, batch rate shopping, per-shipment and batch-wide booking, and quote export (single shipment or all as one combined text file).
+- Login, shipment intake (paste or sample-email buttons), AI extraction with inline correction, per-shipment rate shopping ("Rate this shipment" on each queued card), per-shipment and batch-wide booking, and quote export (single shipment or all as one combined text file).
 - PO-number-driven Acumatica matching (FR-6.1): extract/enter a PO number, look it up, manually confirm the matching PO line (pulls the real Acumatica item description into `material`), or flag as unmatched for Shipping/Purchasing reconciliation — pending the Acumatica secrets above.
 - Freight-class config page (FR-2.2): a "Freight classes" panel (toggle button next to the batch actions) to view, edit, and add material/freight-class defaults, backed by `/api/config/freight-classes`.
 - A D1-backed serialization lock for the batch endpoints (rate-batch/book-all/export-all), with a token-gated reset endpoint (see "Clearing a stuck batch-operations lock" above) so a stuck lock never requires a redeploy. Every outbound `fetch()` (Anthropic, Acumatica) now has an explicit timeout so a slow/unresponsive external service can't hang a request indefinitely.
