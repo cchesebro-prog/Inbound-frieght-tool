@@ -513,6 +513,7 @@ Regards, Delta Cotton Yarn LLC`,
           <button class="secondary small edit-toggle-btn" data-shipment="${shipment.id}">Edit</button>
           <button class="secondary small save-btn" data-shipment="${shipment.id}" style="display:none;">Save</button>
           ${shipment.status === 'queued' ? `<button class="secondary small rate-shipment-btn" data-shipment="${shipment.id}">Rate this shipment</button>` : ''}
+          ${shipment.status === 'rated' ? `<button class="secondary small rate-shipment-btn" data-shipment="${shipment.id}">Re-Rate Shipment</button>` : ''}
           <button class="secondary small lookup-po-btn" data-shipment="${shipment.id}">Look up PO</button>
           ${canExport ? `<a class="btn-link" href="/api/shipments/${shipment.id}/export">Export</a>` : ''}
           <button class="secondary small delete-shipment-btn" data-shipment="${shipment.id}" style="margin-left:auto; color:#b3261e; border-color:#b3261e;">Delete</button>

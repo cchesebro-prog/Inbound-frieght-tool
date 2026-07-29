@@ -301,6 +301,11 @@ app.post("/api/shipments/rate-batch", async (c) => {
             .bind(id)
             .first<Record<string, unknown>>();
           if (!shipment) return { id, quotes: [] };
+          // A booked shipment's booking_decisions row points at a specific
+          // carrier_quotes.id — re-rating (which clears and reinserts quotes
+          // below) would orphan that reference, so booked shipments are
+          // left alone regardless of what the caller asks for.
+          if (shipment.status === "booked") return { id, quotes: [] };
 
           const originState =
             String(shipment.origin_address ?? "").match(/,\s*([A-Z]{2})\s*\d{5}/)?.[1] ?? "WI";
@@ -344,6 +349,11 @@ app.post("/api/shipments/rate-batch", async (c) => {
           } catch (err) {
             console.error("Estes live rate quote failed, using simulated estimate", err);
           }
+
+          // Re-rating (see "Re-Rate Shipment") would otherwise leave the
+          // previous call's rows in place alongside the new ones — clear
+          // first so the quotes table always reflects only the latest call.
+          await c.env.DB.prepare("DELETE FROM carrier_quotes WHERE shipment_id = ?").bind(id).run();
 
           for (const [index, quote] of quotes.entries()) {
             const isEstes = quote.carrier === "Estes Express";
