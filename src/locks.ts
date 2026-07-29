@@ -1,8 +1,9 @@
 import type { Bindings } from "./types";
 
-// Shared by rate-batch/book-all/export-all: all three read and mutate
-// overlapping shipment/quote/booking rows, so they're serialized under one
-// lock rather than one per endpoint.
+// Serializes rate-batch (rating multiple shipments concurrently reads/
+// mutates overlapping shipment/quote rows). book-all/export-all used to
+// share this lock too until they were removed 2026-07-28 in favor of
+// per-shipment booking/export.
 export const BATCH_OPERATIONS_LOCK = "batch_operations";
 
 export class LockHeldError extends Error {

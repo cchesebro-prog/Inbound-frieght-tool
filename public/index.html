@@ -90,8 +90,6 @@
   <button id="add-shipment-btn">Add shipment</button>
 
   <div class="batch-actions">
-    <button class="secondary" id="book-all-btn">Book all best rates</button>
-    <button class="secondary" id="export-all-btn">Export all quotes</button>
     <button class="secondary" id="toggle-freight-classes-btn" style="margin-left:auto;">Freight classes</button>
     <button class="secondary" id="toggle-metrics-btn">Metrics</button>
   </div>
@@ -252,18 +250,6 @@ Regards, Delta Cotton Yarn LLC`,
     loadShipments();
   });
 
-  document.getElementById('book-all-btn').addEventListener('click', async () => {
-    await api('/api/shipments/book-all', { method: 'POST', body: '{}' });
-    loadShipments();
-  });
-
-  document.getElementById('export-all-btn').addEventListener('click', async () => {
-    const { exports } = await api('/api/shipments/export-all', { method: 'POST', body: '{}' });
-    if (!exports || exports.length === 0) return;
-    const combined = exports.map((e) => e.text).join('\n\n---\n\n');
-    downloadTextFile('all-quotes.txt', combined);
-  });
-
   const freightClassesPanel = document.getElementById('freight-classes-panel');
   const freightClassesBody = document.getElementById('freight-classes-body');
 
@@ -390,16 +376,6 @@ Regards, Delta Cotton Yarn LLC`,
     chargeVarianceThresholdPct = value;
     loadShipments();
   });
-
-  function downloadTextFile(filename, text) {
-    const blob = new Blob([text], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
 
   function fieldValue(shipment, field) {
     const value = shipment[field.key];

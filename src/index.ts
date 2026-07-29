@@ -382,42 +382,6 @@ app.post("/api/shipments/:id/book", async (c) => {
   return c.json({ ok: true });
 });
 
-app.post("/api/shipments/book-all", async (c) => {
-  try {
-    const bookedIds = await withLock(c.env.DB, BATCH_OPERATIONS_LOCK, c.get("userId"), async () => {
-      const { results: rated } = await c.env.DB.prepare(
-        "SELECT id FROM shipments WHERE status = 'rated'"
-      ).all<{ id: number }>();
-
-      const ids: number[] = [];
-      for (const shipment of rated) {
-        const best = await c.env.DB.prepare(
-          "SELECT id FROM carrier_quotes WHERE shipment_id = ? AND is_best = 1"
-        )
-          .bind(shipment.id)
-          .first<{ id: number }>();
-        if (!best) continue;
-
-        await c.env.DB.prepare(
-          "INSERT INTO booking_decisions (shipment_id, chosen_quote_id, booked_by) VALUES (?, ?, ?)"
-        )
-          .bind(shipment.id, best.id, c.get("userId"))
-          .run();
-        await c.env.DB.prepare("UPDATE shipments SET status = 'booked' WHERE id = ?")
-          .bind(shipment.id)
-          .run();
-        ids.push(shipment.id);
-      }
-      return ids;
-    });
-
-    return c.json({ booked: bookedIds });
-  } catch (err) {
-    if (err instanceof LockHeldError) return c.json({ error: err.message }, 409);
-    throw err;
-  }
-});
-
 // FR-4.5: since no live carrier booking API exists yet (Phase 2, see
 // REQUIREMENTS.md FR-3.3), "confirming with the carrier" after booking a
 // quote is still a manual phone/email step outside the tool — this just
@@ -505,34 +469,6 @@ app.get("/api/shipments/:id/export", async (c) => {
 
   c.header("Content-Disposition", `attachment; filename="shipment-${id}-quote.txt"`);
   return c.text(result.text);
-});
-
-app.post("/api/shipments/export-all", async (c) => {
-  try {
-    const exports = await withLock(c.env.DB, BATCH_OPERATIONS_LOCK, c.get("userId"), async () => {
-      const { results: shipments } = await c.env.DB.prepare(
-        "SELECT id FROM shipments WHERE status IN ('rated', 'booked')"
-      ).all<{ id: number }>();
-
-      const out: { shipmentId: number; text: string }[] = [];
-      for (const shipment of shipments) {
-        const result = await buildExportText(c.env.DB, shipment.id);
-        if (!result) continue;
-        if (result.bookingId !== null) {
-          await c.env.DB.prepare("UPDATE booking_decisions SET exported = 1 WHERE id = ?")
-            .bind(result.bookingId)
-            .run();
-        }
-        out.push({ shipmentId: shipment.id, text: result.text });
-      }
-      return out;
-    });
-
-    return c.json({ exports });
-  } catch (err) {
-    if (err instanceof LockHeldError) return c.json({ error: err.message }, 409);
-    throw err;
-  }
 });
 
 // FR-4.6: a real Bill of Lading, generated from the shipment/booking data,
