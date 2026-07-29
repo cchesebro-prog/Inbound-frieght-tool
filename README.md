@@ -54,6 +54,14 @@ npm run db:migrate:remote
 npm run deploy
 ```
 
+**Automatic deploy (2026-07-29):** every push to `claude/transportation-management-requirements-58m992` now also deploys itself via GitHub Actions (`.github/workflows/deploy.yml`) — applies any pending D1 migrations, then `npm run deploy`. Manual `npm run deploy`/`db:migrate:remote` are no longer needed for this branch, though they still work fine if you want to deploy locally for any reason (e.g. testing a change before pushing).
+
+This requires two GitHub Actions repo secrets (Settings → Secrets and variables → Actions):
+- `CLOUDFLARE_API_TOKEN` — create one at the Cloudflare dashboard (My Profile → API Tokens → Create Token). The "Edit Cloudflare Workers" template covers what's needed (Workers Scripts + D1 edit access); scope it to this account only.
+- `CLOUDFLARE_ACCOUNT_ID` — found on the Cloudflare dashboard's Workers & Pages overview page (right sidebar), or via `npx wrangler whoami`.
+
+Until both secrets are set, the workflow will fail (visible in the repo's Actions tab) — deploying manually still works in the meantime.
+
 After the first deploy, create your first real user against the **remote** D1 (drop `--local`) so you can actually log in to the deployed Worker:
 
 ```bash

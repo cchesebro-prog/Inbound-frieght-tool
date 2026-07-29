@@ -1,0 +1,43 @@
+name: Deploy
+
+# Runs on every push to this branch so a completed commit is live without a
+# manual `npm run deploy` (and `db:migrate:remote`) afterward. Requires
+# CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID as GitHub Actions repo
+# secrets — see README.md "Automatic deploy" for how to create them.
+on:
+  push:
+    branches:
+      - claude/transportation-management-requirements-58m992
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install
+
+      - run: npm run typecheck
+
+      # Applies any migration files not yet recorded in the remote D1's
+      # d1_migrations tracking table. Piping "y" guarantees the interactive
+      # confirmation prompt is answered regardless of whether wrangler's own
+      # CI-detection would have skipped it. All migrations to date are
+      # additive-only (ALTER TABLE ADD COLUMN / CREATE TABLE), so this is
+      # safe to run unattended — a future destructive migration should be
+      # applied manually instead of relying on this step.
+      - name: Apply D1 migrations
+        run: echo "y" | npx wrangler d1 migrations apply inbound-freight-tool-db --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy Worker
+        run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
